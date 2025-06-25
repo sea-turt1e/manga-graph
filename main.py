@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
 
-from presentation.api import manga_router
+from presentation.api import manga_router, media_arts_router
 
 load_dotenv()
 
@@ -19,6 +19,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(manga_router)
+app.include_router(media_arts_router)
 
 @app.get("/")
 async def root():

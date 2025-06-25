@@ -10,3 +10,4 @@ python-multipart==0.0.6
 aiofiles==23.2.1
 pytest==7.4.3
 pytest-asyncio==0.21.1
+sparqlwrapper==2.0.0

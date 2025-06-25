@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class MediaArtsSPARQLClient:
     """文化庁メディア芸術データベースSPARQLクライアント"""
     
-    def __init__(self, endpoint_url: str = "https://sparql.cineii.jbf.ne.jp/sparql"):
+    def __init__(self, endpoint_url: str = "https://mediaarts-db.artmuseums.go.jp/sparql"):
         self.endpoint_url = endpoint_url
         self.sparql = SPARQLWrapper(endpoint_url)
         self.sparql.setReturnFormat(JSON)
@@ -65,36 +65,16 @@ class MediaArtsSPARQLClient:
             作品データのリスト
         """
         query = f"""
-        PREFIX schema: <http://schema.org/>
-        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        PREFIX madb: <https://mediag.bunka.go.jp/madb_lab/lod/ns/>
+        PREFIX schema: <https://schema.org/>
+        PREFIX madb: <https://mediaarts-db.artmuseums.go.jp/data/class#>
         
-        SELECT DISTINCT ?work ?title ?creator ?creatorName ?genre ?publisher ?publishedDate
+        SELECT DISTINCT ?work ?title
         WHERE {{
-            ?work a schema:CreativeWork ;
-                  schema:genre ?genreUri ;
-                  rdfs:label ?title .
-            
-            ?genreUri rdfs:label ?genre .
-            FILTER(CONTAINS(LCASE(?genre), "漫画") || CONTAINS(LCASE(?genre), "マンガ") || CONTAINS(LCASE(?genre), "comic"))
-            
-            OPTIONAL {{
-                ?work schema:creator ?creator .
-                ?creator rdfs:label ?creatorName .
-            }}
-            
-            OPTIONAL {{
-                ?work schema:publisher ?publisherUri .
-                ?publisherUri rdfs:label ?publisher .
-            }}
-            
-            OPTIONAL {{
-                ?work schema:datePublished ?publishedDate .
-            }}
+            ?work a madb:MangaBook .
+            ?work schema:name ?title .
             
             FILTER(
-                CONTAINS(LCASE(?title), LCASE("{search_term}")) ||
-                CONTAINS(LCASE(str(?creatorName)), LCASE("{search_term}"))
+                CONTAINS(LCASE(?title), LCASE("{search_term}"))
             )
         }}
         ORDER BY ?title

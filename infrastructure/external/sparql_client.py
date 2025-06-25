@@ -286,3 +286,96 @@ class MediaArtsSPARQLClient:
             resources.append(resource_data)
             
         return resources
+    
+    def get_manga_works_by_magazine_period(self, magazine_name: str = None, year: str = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        同じ掲載誌・同じ時期の漫画作品を取得
+        
+        Args:
+            magazine_name: 雑誌名（部分一致）
+            year: 出版年
+            limit: 結果の上限
+            
+        Returns:
+            作品データのリスト
+        """
+        # 基本クエリ
+        query_parts = [
+            "PREFIX schema: <https://schema.org/>",
+            "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>",
+            "PREFIX madb: <https://mediaarts-db.artmuseums.go.jp/data/class#>",
+            "PREFIX dcterms: <http://purl.org/dc/terms/>",
+            "",
+            "SELECT DISTINCT ?work ?title ?creator ?creatorName ?magazine ?magazineName ?publishedDate ?publisher",
+            "WHERE {"
+        ]
+        
+        # 作品の基本情報
+        query_parts.extend([
+            "    ?work a madb:MangaBook ;",
+            "          schema:name ?title .",
+            "",
+            "    OPTIONAL {",
+            "        ?work schema:creator ?creatorName .",
+            "    }",
+            "",
+            "    OPTIONAL {",
+            "        ?work dcterms:creator ?creator .",
+            "    }",
+            "",
+            "    OPTIONAL {",
+            "        ?work schema:isPartOf ?magazine .",
+            "        ?magazine rdfs:label ?magazineName .",
+            "    }",
+            "",
+            "    OPTIONAL {",
+            "        ?work schema:datePublished ?publishedDate .",
+            "    }",
+            "",
+            "    OPTIONAL {",
+            "        ?work schema:publisher ?publisher .",
+            "    }"
+        ])
+        
+        # フィルター条件
+        filters = []
+        
+        if magazine_name:
+            filters.append(f'CONTAINS(LCASE(?magazineName), LCASE("{magazine_name}"))')
+        
+        if year:
+            filters.append(f'CONTAINS(?publishedDate, "{year}")')
+        
+        if filters:
+            query_parts.extend([
+                "",
+                "    FILTER(" + " && ".join(filters) + ")"
+            ])
+        
+        query_parts.extend([
+            "}",
+            "ORDER BY ?magazineName ?publishedDate ?title",
+            f"LIMIT {limit}"
+        ])
+        
+        query = "\n".join(query_parts)
+        
+        results = self.execute_query(query)
+        if not results:
+            return []
+        
+        works = []
+        for binding in results.get('results', {}).get('bindings', []):
+            work_data = {
+                'uri': binding.get('work', {}).get('value', ''),
+                'title': binding.get('title', {}).get('value', ''),
+                'creator_uri': binding.get('creator', {}).get('value', ''),
+                'creator_name': binding.get('creatorName', {}).get('value', ''),
+                'magazine_uri': binding.get('magazine', {}).get('value', ''),
+                'magazine_name': binding.get('magazineName', {}).get('value', ''),
+                'published_date': binding.get('publishedDate', {}).get('value', ''),
+                'publisher': binding.get('publisher', {}).get('value', '')
+            }
+            works.append(work_data)
+            
+        return works

@@ -66,9 +66,11 @@ class MediaArtsSPARQLClient:
         """
         query = f"""
         PREFIX schema: <https://schema.org/>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         PREFIX madb: <https://mediaarts-db.artmuseums.go.jp/data/class#>
+        PREFIX dcterms: <http://purl.org/dc/terms/>
         
-        SELECT DISTINCT ?work ?title
+        SELECT DISTINCT ?work ?title ?creator ?creatorName ?genre ?publisher ?publishedDate
         WHERE {{
             ?work a madb:MangaBook .
             ?work schema:name ?title .
@@ -76,6 +78,26 @@ class MediaArtsSPARQLClient:
             FILTER(
                 CONTAINS(LCASE(?title), LCASE("{search_term}"))
             )
+            
+            OPTIONAL {{
+                ?work schema:creator ?creatorName .
+            }}
+            
+            OPTIONAL {{
+                ?work dcterms:creator ?creator .
+            }}
+            
+            OPTIONAL {{
+                ?work schema:genre ?genre .
+            }}
+            
+            OPTIONAL {{
+                ?work schema:publisher ?publisher .
+            }}
+            
+            OPTIONAL {{
+                ?work schema:datePublished ?publishedDate .
+            }}
         }}
         ORDER BY ?title
         LIMIT {limit}
@@ -86,9 +108,18 @@ class MediaArtsSPARQLClient:
             return []
         
         works = []
+        seen_works = set()
+        
         for binding in results.get('results', {}).get('bindings', []):
+            work_uri = binding.get('work', {}).get('value', '')
+            
+            # 重複する作品を除外
+            if work_uri in seen_works:
+                continue
+            seen_works.add(work_uri)
+            
             work_data = {
-                'uri': binding.get('work', {}).get('value', ''),
+                'uri': work_uri,
                 'title': binding.get('title', {}).get('value', ''),
                 'creator_uri': binding.get('creator', {}).get('value', ''),
                 'creator_name': binding.get('creatorName', {}).get('value', ''),

@@ -17,7 +17,7 @@ services:
       - neo4j_plugins:/plugins
 
   backend:
-    build: ./backend
+    build: .
     container_name: manga-backend
     ports:
       - "8000:8000"
@@ -31,7 +31,7 @@ services:
       - ./data:/app/data
 
   frontend:
-    build: ./frontend
+    build: ./manga-graph-frontend
     container_name: manga-frontend
     ports:
       - "3000:3000"

@@ -271,3 +271,151 @@ class MediaArtsDataService:
         except Exception as e:
             logger.error(f"Error in fulltext search: {e}")
             return {"nodes": [], "edges": []}
+
+    def search_manga_data_with_related(self, search_term: str, limit: int = 20, include_related: bool = True) -> Dict[str, List]:
+        """
+        漫画データを検索して関連作品も含めてグラフ形式で返す
+
+        Args:
+            search_term: 検索語
+            limit: 結果の上限
+            include_related: 関連作品を含めるかどうか
+
+        Returns:
+            ノードとエッジのリストを含む辞書
+        """
+        try:
+            # まず基本検索を実行
+            base_result = self.search_manga_data(search_term, limit)
+            
+            if not include_related:
+                return base_result
+            
+            nodes = base_result["nodes"]
+            edges = base_result["edges"]
+            processed_uris = set()
+            processed_publishers = set()
+            processed_years = set()
+            
+            # 既存のノードのURIを記録
+            for node in nodes:
+                processed_uris.add(node["id"])
+                if node["type"] == "work":
+                    publisher = node["properties"].get("publisher", "")
+                    published_date = node["properties"].get("published_date", "")
+                    
+                    if publisher:
+                        processed_publishers.add(publisher)
+                    
+                    if published_date:
+                        year = published_date[:4] if len(published_date) >= 4 else None
+                        if year and year.isdigit():
+                            processed_years.add(year)
+            
+            # 重複期間が長い関連作品を優先的に取得
+            try:
+                overlap_works = self.sparql_client.get_related_works_by_overlap_period(search_term, 15)
+                self._add_related_works_to_graph(overlap_works, nodes, edges, processed_uris, "overlap_period")
+            except Exception as e:
+                logger.warning(f"Error getting related works by overlap period: {e}")
+            
+            # 重複期間が検出できない場合は、基本の関連作品検索をフォールバック
+            if len(nodes) <= 2:  # 基本検索結果のみの場合
+                try:
+                    # NARUTOなど他の有名作品を明示的に検索
+                    famous_works = ['NARUTO', 'BLEACH', 'ハンター', 'デスノート', 'るろうに剣心']
+                    for work_name in famous_works:
+                        if work_name.lower() not in search_term.lower():
+                            related_results = self.sparql_client.search_manga_works(work_name, 2)
+                            self._add_related_works_to_graph(related_results, nodes, edges, processed_uris, "same_publisher")
+                except Exception as e:
+                    logger.warning(f"Error getting famous works: {e}")
+            
+            return {"nodes": nodes, "edges": edges}
+            
+        except Exception as e:
+            logger.error(f"Error searching manga data with related: {e}")
+            return {"nodes": [], "edges": []}
+    
+    def _add_related_works_to_graph(self, works_data: List[Dict], nodes: List, edges: List, processed_uris: set, relation_type: str):
+        """
+        関連作品をグラフに追加するヘルパーメソッド
+        
+        Args:
+            works_data: 作品データのリスト
+            nodes: ノードリスト（参照渡し）
+            edges: エッジリスト（参照渡し）
+            processed_uris: 処理済みURIのセット（参照渡し）
+            relation_type: 関係タイプ
+        """
+        publisher_nodes = {}  # 出版社ノードを記録
+        
+        for work_data in works_data:
+            work_uri = work_data.get("uri", "")
+            creator_uri = work_data.get("creator_uri", "")
+            title = work_data.get("title", "").strip()
+            publisher = work_data.get("publisher", "").strip()
+            
+            # 作品ノードを追加（未処理の場合のみ）
+            if work_uri and work_uri not in processed_uris:
+                work_node = {
+                    "id": work_uri,
+                    "label": title or "Unknown Work",
+                    "type": "work",
+                    "properties": {
+                        "title": title,
+                        "genre": work_data.get("genre", ""),
+                        "publisher": publisher,
+                        "published_date": work_data.get("published_date", ""),
+                        "source": "media_arts_db",
+                    },
+                }
+                nodes.append(work_node)
+                processed_uris.add(work_uri)
+            
+            # 作者ノードを追加（未処理の場合のみ）
+            if creator_uri and creator_uri not in processed_uris:
+                creator_node = {
+                    "id": creator_uri,
+                    "label": work_data.get("creator_name", "Unknown Creator"),
+                    "type": "author",
+                    "properties": {"name": work_data.get("creator_name", ""), "source": "media_arts_db"},
+                }
+                nodes.append(creator_node)
+                processed_uris.add(creator_uri)
+            
+            # 出版社ノードを作成（まだない場合）
+            if publisher and relation_type == "published_by":
+                publisher_id = f"publisher_{hash(publisher)}"
+                if publisher_id not in publisher_nodes:
+                    publisher_node = {
+                        "id": publisher_id,
+                        "label": publisher,
+                        "type": "publisher",
+                        "properties": {"name": publisher, "source": "media_arts_db"},
+                    }
+                    nodes.append(publisher_node)
+                    processed_uris.add(publisher_id)
+                    publisher_nodes[publisher_id] = publisher_node
+                
+                # 出版社と作品の関係を追加
+                if work_uri:
+                    edge = {
+                        "id": f"{publisher_id}-publishes-{work_uri}",
+                        "source": publisher_id,
+                        "target": work_uri,
+                        "type": "publishes",
+                        "properties": {"source": "media_arts_db"},
+                    }
+                    edges.append(edge)
+            
+            # 作者と作品の関係を追加
+            if work_uri and creator_uri:
+                edge = {
+                    "id": f"{creator_uri}-created-{work_uri}",
+                    "source": creator_uri,
+                    "target": work_uri,
+                    "type": "created",
+                    "properties": {"source": "media_arts_db"},
+                }
+                edges.append(edge)

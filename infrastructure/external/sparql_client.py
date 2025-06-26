@@ -286,3 +286,148 @@ class MediaArtsSPARQLClient:
             resources.append(resource_data)
             
         return resources
+    
+    def get_related_works_by_overlap_period(self, reference_series: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """
+        連載期間の重複が長い関連作品を取得
+        
+        Args:
+            reference_series: 基準となる作品名
+            limit: 結果の上限
+            
+        Returns:
+            重複期間でソートされた関連作品のリスト
+        """
+        # まず基準作品の期間を推定
+        ref_works = self.search_manga_works(reference_series, 20)
+        if not ref_works:
+            return []
+        
+        ref_years = []
+        for work in ref_works:
+            date_str = work.get('published_date', '')
+            if date_str and len(date_str) >= 4 and date_str[:4].isdigit():
+                ref_years.append(int(date_str[:4]))
+        
+        if not ref_years:
+            return []
+        
+        ref_start = min(ref_years) - 1  # 連載開始を単行本より1年前と推定
+        ref_end = max(ref_years)
+        
+        # 同じ出版社の作品を取得
+        publisher = ref_works[0].get('publisher', '集英社')
+        
+        # 集英社の作品を取得するクエリ
+        query = f"""
+        PREFIX schema: <https://schema.org/>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX madb: <https://mediaarts-db.artmuseums.go.jp/data/class#>
+        PREFIX dcterms: <http://purl.org/dc/terms/>
+        
+        SELECT DISTINCT ?work ?title ?creator ?creatorName ?genre ?publisher ?publishedDate
+        WHERE {{
+            ?work a madb:MangaBook .
+            ?work schema:name ?title .
+            ?work schema:publisher ?publisher .
+            ?work schema:datePublished ?publishedDate .
+            
+            FILTER(CONTAINS(LCASE(?publisher), "集英社"))
+            
+            OPTIONAL {{
+                ?work schema:creator ?creatorName .
+            }}
+            
+            OPTIONAL {{
+                ?work dcterms:creator ?creator .
+            }}
+            
+            OPTIONAL {{
+                ?work schema:genre ?genre .
+            }}
+        }}
+        ORDER BY ?title ?publishedDate
+        LIMIT 100
+        """
+        
+        results = self.execute_query(query)
+        if not results:
+            return []
+            
+        related_works = []
+        for binding in results.get('results', {}).get('bindings', []):
+            work_data = {
+                'uri': binding.get('work', {}).get('value', ''),
+                'title': binding.get('title', {}).get('value', ''),
+                'creator_uri': binding.get('creator', {}).get('value', ''),
+                'creator_name': binding.get('creatorName', {}).get('value', ''),
+                'genre': binding.get('genre', {}).get('value', ''),
+                'publisher': binding.get('publisher', {}).get('value', ''),
+                'published_date': binding.get('publishedDate', {}).get('value', '')
+            }
+            related_works.append(work_data)
+        
+        # タイトルごとに作品をグループ化し重複期間を計算
+        series_data = {}
+        for work in related_works:
+            title = work.get('title', '').strip()
+            date_str = work.get('published_date', '')
+            
+            # 基準作品を除外
+            if reference_series.lower() in title.lower():
+                continue
+            
+            base_title = self._extract_base_title(title)
+            
+            if base_title not in series_data:
+                series_data[base_title] = {
+                    'work_data': work,
+                    'dates': []
+                }
+            
+            if date_str and len(date_str) >= 4 and date_str[:4].isdigit():
+                series_data[base_title]['dates'].append(int(date_str[:4]))
+        
+        # 重複期間を計算してソート
+        overlap_scores = []
+        for base_title, data in series_data.items():
+            if not data['dates']:
+                continue
+            
+            start_year = min(data['dates']) - 1
+            end_year = max(data['dates'])
+            
+            # 重複期間を計算
+            overlap_start = max(ref_start, start_year)
+            overlap_end = min(ref_end, end_year)
+            overlap_years = max(0, overlap_end - overlap_start + 1)
+            
+            if overlap_years > 0:
+                overlap_scores.append({
+                    'work_data': data['work_data'],
+                    'overlap_years': overlap_years,
+                    'volume_count': len(data['dates'])
+                })
+        
+        # 重複期間の長さでソート（降順）
+        overlap_scores.sort(key=lambda x: (-x['overlap_years'], -x['volume_count']))
+        
+        return [item['work_data'] for item in overlap_scores[:limit]]
+    
+    def _extract_base_title(self, title: str) -> str:
+        """
+        タイトルからベースタイトルを抽出（巻数などを除去）
+        """
+        import re
+        
+        patterns = [
+            r'\s*\d+$',  # 末尾の数字
+            r'\s*第\d+巻?$',  # 第X巻
+            r'\s*\(\d+\)$',  # (数字)
+        ]
+        
+        base = title
+        for pattern in patterns:
+            base = re.sub(pattern, '', base, flags=re.IGNORECASE)
+        
+        return base.strip()

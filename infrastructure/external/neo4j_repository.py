@@ -25,22 +25,25 @@ class Neo4jMangaRepository:
             self.driver.close()
     
     def search_manga_works(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """Search for manga works by title"""
+        """Search for manga works by title, grouping by series"""
         with self.driver.session() as session:
+            # First, get all matching works
             query = """
             MATCH (w:Work)
             WHERE toLower(w.title) CONTAINS toLower($search_term)
             OPTIONAL MATCH (a:Author)-[:CREATED]->(w)
             OPTIONAL MATCH (p:Publisher)-[:PUBLISHED]->(w)
+            OPTIONAL MATCH (s:Series)-[:CONTAINS]->(w)
             RETURN w.id as work_id, w.title as title, w.published_date as published_date,
                    collect(DISTINCT a.name) as creators,
                    collect(DISTINCT p.name) as publishers,
-                   w.genre as genre, w.isbn as isbn, w.volume as volume
-            LIMIT $limit
+                   w.genre as genre, w.isbn as isbn, w.volume as volume,
+                   s.id as series_id, s.name as series_name
+            ORDER BY w.title, w.published_date
             """
             
-            result = session.run(query, search_term=search_term, limit=limit)
-            works = []
+            result = session.run(query, search_term=search_term)
+            all_works = []
             
             for record in result:
                 work = {
@@ -51,11 +54,132 @@ class Neo4jMangaRepository:
                     'publishers': [p for p in record['publishers'] if p],
                     'genre': record['genre'],
                     'isbn': record['isbn'],
-                    'volume': record['volume']
+                    'volume': record['volume'],
+                    'series_id': record['series_id'],
+                    'series_name': record['series_name']
                 }
-                works.append(work)
+                all_works.append(work)
             
-            return works
+            # Group works by series or base title
+            series_groups = {}
+            standalone_works = []
+            
+            for work in all_works:
+                if work['series_id']:
+                    # グループ化はシリーズIDで行う
+                    series_key = work['series_id']
+                    if series_key not in series_groups:
+                        series_groups[series_key] = {
+                            'series_id': work['series_id'],
+                            'series_name': work['series_name'] or self._extract_base_title(work['title']),
+                            'works': [],
+                            'creators': set(),
+                            'publishers': set(),
+                            'earliest_date': work['published_date'],
+                            'latest_date': work['published_date'],
+                            'volumes': []
+                        }
+                    series_groups[series_key]['works'].append(work)
+                    series_groups[series_key]['creators'].update(work['creators'])
+                    series_groups[series_key]['publishers'].update(work['publishers'])
+                    if work['volume']:
+                        series_groups[series_key]['volumes'].append(work['volume'])
+                    # 最も古い日付と新しい日付を更新
+                    if work['published_date'] and work['published_date'] < series_groups[series_key]['earliest_date']:
+                        series_groups[series_key]['earliest_date'] = work['published_date']
+                    if work['published_date'] and work['published_date'] > series_groups[series_key]['latest_date']:
+                        series_groups[series_key]['latest_date'] = work['published_date']
+                else:
+                    # シリーズIDがない場合は、タイトルから基本タイトルを抽出してグループ化を試みる
+                    base_title = self._extract_base_title(work['title'])
+                    if base_title in series_groups:
+                        series_groups[base_title]['works'].append(work)
+                        series_groups[base_title]['creators'].update(work['creators'])
+                        series_groups[base_title]['publishers'].update(work['publishers'])
+                        if work['volume']:
+                            series_groups[base_title]['volumes'].append(work['volume'])
+                    else:
+                        # 他の作品とマッチしない場合は独立した作品として扱う
+                        found_group = False
+                        for key, group in series_groups.items():
+                            if base_title == self._extract_base_title(group['series_name']):
+                                group['works'].append(work)
+                                group['creators'].update(work['creators'])
+                                group['publishers'].update(work['publishers'])
+                                if work['volume']:
+                                    group['volumes'].append(work['volume'])
+                                found_group = True
+                                break
+                        
+                        if not found_group:
+                            # 新しいグループを作成
+                            series_groups[base_title] = {
+                                'series_id': f"series_{abs(hash(base_title))}",
+                                'series_name': base_title,
+                                'works': [work],
+                                'creators': set(work['creators']),
+                                'publishers': set(work['publishers']),
+                                'earliest_date': work['published_date'],
+                                'latest_date': work['published_date'],
+                                'volumes': [work['volume']] if work['volume'] else []
+                            }
+            
+            # Convert groups to single works representing the series
+            consolidated_works = []
+            for group_data in series_groups.values():
+                # 複数の作品がある場合はシリーズとして統合
+                if len(group_data['works']) > 1:
+                    series_work = {
+                        'work_id': group_data['series_id'],
+                        'title': f"{group_data['series_name']} (シリーズ)",
+                        'published_date': f"{group_data['earliest_date']} - {group_data['latest_date']}",
+                        'creators': list(group_data['creators']),
+                        'publishers': list(group_data['publishers']),
+                        'genre': group_data['works'][0]['genre'],  # 最初の作品のジャンルを使用
+                        'isbn': None,  # シリーズ全体のISBNはなし
+                        'volume': f"{len(group_data['works'])}巻",
+                        'is_series': True,
+                        'work_count': len(group_data['works']),
+                        'individual_works': group_data['works']  # 個別作品の情報を保持
+                    }
+                    consolidated_works.append(series_work)
+                else:
+                    # 単一作品の場合はそのまま使用
+                    single_work = group_data['works'][0]
+                    single_work['is_series'] = False
+                    single_work['work_count'] = 1
+                    consolidated_works.append(single_work)
+            
+            # Add standalone works
+            consolidated_works.extend(standalone_works)
+            
+            # Sort by title and limit results
+            consolidated_works.sort(key=lambda x: x['title'])
+            return consolidated_works[:limit]
+    
+    def _extract_base_title(self, title: str) -> str:
+        """Extract base title by removing volume numbers and other suffixes"""
+        import re
+        
+        if not title:
+            return title
+            
+        # パターンで巻数や番号を除去
+        patterns = [
+            r'\s*\d+$',  # 末尾の数字
+            r'\s*第\d+巻?$',  # 第X巻
+            r'\s*\(\d+\)$',  # (数字)
+            r'\s*vol\.\s*\d+$',  # vol. X
+            r'\s*VOLUME\s*\d+$',  # VOLUME X
+            r'\s*巻\d+$',  # 巻X
+            r'\s*その\d+$',  # そのX
+        ]
+        
+        base = title
+        for pattern in patterns:
+            base = re.sub(pattern, '', base, flags=re.IGNORECASE)
+        
+        return base.strip()
     
     def get_related_works_by_author(self, work_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Get related works by the same author"""

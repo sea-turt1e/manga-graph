@@ -196,4 +196,8 @@ cython_debug/
 .env
 .python-version
 
-CLAUDE.md
+# Media Arts Database files (large datasets)
+data/mediaarts/
+*.zip
+*.json
+!data/mediaarts/.gitkeep

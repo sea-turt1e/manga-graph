@@ -1,7 +1,7 @@
 # Claude Code Configuration
 
 ## YOU MUST: 
-- 全てのTODO完了またはユーザー のアクションが必要な際は最後に一度だけ `afplay /System/Library/Sounds/Sosumi.aiff` コマンドを実行して通知する
+- ユーザー のアクションが必要な際は一度だけ `afplay /System/Library/Sounds/Sosumi.aiff` コマンドを実行して通知する
 - 回答は日本語で行ってください
 - TODOには必ずブランチ作成・実装内容のテスト・コミット・push・PR作成（まだ作成されていない場合）が含まれるべきです
 

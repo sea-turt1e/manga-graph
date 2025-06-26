@@ -266,6 +266,32 @@ async def search_media_arts_with_related(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@media_arts_router.get("/magazine-relationships", response_model=GraphResponse)
+async def get_magazine_relationships_media_arts(
+    magazine_name: Optional[str] = Query(None, description="雑誌名（部分一致）"),
+    year: Optional[str] = Query(None, description="出版年"),
+    limit: int = Query(50, description="結果の上限"),
+    media_arts_service: MediaArtsDataService = Depends(get_media_arts_service)
+):
+    """文化庁メディア芸術データベースから同じ掲載誌・同じ時期の漫画関係を取得"""
+    try:
+        graph_data = media_arts_service.get_magazine_relationships(
+            magazine_name=magazine_name,
+            year=year,
+            limit=limit
+        )
+        
+        return GraphResponse(
+            nodes=graph_data["nodes"],
+            edges=graph_data["edges"],
+            total_nodes=len(graph_data["nodes"]),
+            total_edges=len(graph_data["edges"])
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Neo4j Fast Search Endpoints
 @neo4j_router.get("/search", response_model=GraphResponse)
 async def search_neo4j_fast(
@@ -322,4 +348,3 @@ async def get_neo4j_stats(
         return {"status": "success", "data": stats}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-

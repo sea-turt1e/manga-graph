@@ -419,3 +419,103 @@ class MediaArtsDataService:
                     "properties": {"source": "media_arts_db"},
                 }
                 edges.append(edge)
+    
+    def get_magazine_relationships(self, magazine_name: str = None, year: str = None, limit: int = 50) -> Dict[str, List]:
+        """
+        同じ掲載誌・同じ時期の漫画関係を取得してグラフ形式で返す
+        
+        Args:
+            magazine_name: 雑誌名（部分一致）
+            year: 出版年
+            limit: 結果の上限
+            
+        Returns:
+            ノードとエッジのリストを含む辞書
+        """
+        try:
+            works_data = self.sparql_client.get_manga_works_by_magazine_period(
+                magazine_name=magazine_name, year=year, limit=limit
+            )
+            
+            nodes = []
+            edges = []
+            processed_uris = set()
+            
+            # 雑誌ノードと作品ノードを作成
+            magazines = {}  # 雑誌URI -> 雑誌ノード
+            
+            for work_data in works_data:
+                work_uri = work_data.get('uri', '')
+                creator_uri = work_data.get('creator_uri', '')
+                magazine_uri = work_data.get('magazine_uri', '')
+                
+                # 作品ノードを追加
+                if work_uri and work_uri not in processed_uris:
+                    work_node = {
+                        'id': work_uri,
+                        'label': work_data.get('title', 'Unknown Work'),
+                        'type': 'work',
+                        'properties': {
+                            'title': work_data.get('title', ''),
+                            'published_date': work_data.get('published_date', ''),
+                            'publisher': work_data.get('publisher', ''),
+                            'source': 'media_arts_db'
+                        }
+                    }
+                    nodes.append(work_node)
+                    processed_uris.add(work_uri)
+                
+                # 作者ノードを追加
+                if creator_uri and creator_uri not in processed_uris:
+                    creator_node = {
+                        'id': creator_uri,
+                        'label': work_data.get('creator_name', 'Unknown Creator'),
+                        'type': 'author',
+                        'properties': {
+                            'name': work_data.get('creator_name', ''),
+                            'source': 'media_arts_db'
+                        }
+                    }
+                    nodes.append(creator_node)
+                    processed_uris.add(creator_uri)
+                
+                # 雑誌ノードを追加
+                if magazine_uri and magazine_uri not in magazines:
+                    magazine_node = {
+                        'id': magazine_uri,
+                        'label': work_data.get('magazine_name', 'Unknown Magazine'),
+                        'type': 'magazine',
+                        'properties': {
+                            'name': work_data.get('magazine_name', ''),
+                            'source': 'media_arts_db'
+                        }
+                    }
+                    nodes.append(magazine_node)
+                    magazines[magazine_uri] = magazine_node
+                    processed_uris.add(magazine_uri)
+                
+                # 作者と作品の関係
+                if creator_uri and work_uri:
+                    edges.append({
+                        'id': f'{creator_uri}-created-{work_uri}',
+                        'source': creator_uri,
+                        'target': work_uri,
+                        'type': 'created',
+                        'properties': {'source': 'media_arts_db'}
+                    })
+                
+                # 雑誌と作品の関係
+                if magazine_uri and work_uri:
+                    edges.append({
+                        'id': f'{magazine_uri}-published-{work_uri}',
+                        'source': magazine_uri,
+                        'target': work_uri,
+                        'type': 'published',
+                        'properties': {'source': 'media_arts_db'}
+                    })
+            
+            return {'nodes': nodes, 'edges': edges}
+            
+        except Exception as e:
+            logger.error(f"Error getting magazine relationships: {e}")
+            return {'nodes': [], 'edges': []}

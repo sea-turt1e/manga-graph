@@ -16,8 +16,13 @@ class Neo4jMangaRepository:
         self.uri = uri or os.getenv('NEO4J_URI', 'bolt://localhost:7687')
         self.user = user or os.getenv('NEO4J_USER', 'neo4j')
         self.password = password or os.getenv('NEO4J_PASSWORD', 'password')
-        self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
-        logger.info(f"Connected to Neo4j at {self.uri}")
+        logger.info(f"Attempting to connect to Neo4j at {self.uri} with user {self.user}")
+        try:
+            self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
+            logger.info(f"Successfully connected to Neo4j at {self.uri}")
+        except Exception as e:
+            logger.error(f"Failed to connect to Neo4j at {self.uri}: {e}")
+            raise
     
     def close(self):
         """Close the database connection"""
@@ -26,6 +31,8 @@ class Neo4jMangaRepository:
     
     def search_manga_works(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Search for manga works by title, grouping by series"""
+        logger.info(f"Searching for manga works with term: '{search_term}', limit: {limit}")
+        
         with self.driver.session() as session:
             # First, get all matching works
             query = """
@@ -42,6 +49,7 @@ class Neo4jMangaRepository:
             ORDER BY w.title, w.published_date
             """
             
+            logger.debug(f"Running query with search_term: {search_term}")
             result = session.run(query, search_term=search_term)
             all_works = []
             
@@ -59,6 +67,8 @@ class Neo4jMangaRepository:
                     'series_name': record['series_name']
                 }
                 all_works.append(work)
+            
+            logger.info(f"Found {len(all_works)} works matching '{search_term}'")
             
             # Group works by series or base title
             series_groups = {}
@@ -271,9 +281,12 @@ class Neo4jMangaRepository:
     
     def search_manga_data_with_related(self, search_term: str, limit: int = 20, include_related: bool = True) -> Dict[str, Any]:
         """Search manga data and include related works for graph visualization"""
+        logger.info(f"search_manga_data_with_related called with term: '{search_term}', limit: {limit}, include_related: {include_related}")
+        
         main_works = self.search_manga_works(search_term, limit)
         
         if not main_works:
+            logger.warning(f"No works found for search term: '{search_term}'")
             return {'nodes': [], 'edges': []}
         
         nodes = []
@@ -459,6 +472,7 @@ class Neo4jMangaRepository:
                             if edge not in edges:
                                 edges.append(edge)
         
+        logger.info(f"Returning {len(nodes)} nodes and {len(edges)} edges for search term: '{search_term}'")
         return {
             'nodes': nodes,
             'edges': edges
@@ -466,17 +480,22 @@ class Neo4jMangaRepository:
     
     def get_database_statistics(self) -> Dict[str, int]:
         """Get database statistics"""
-        with self.driver.session() as session:
-            stats = {}
-            
-            # Count nodes
-            for label in ['Work', 'Author', 'Publisher', 'Series']:
-                result = session.run(f"MATCH (n:{label}) RETURN count(n) as count")
-                stats[f'{label.lower()}_count'] = result.single()['count']
-            
-            # Count relationships
-            for rel_type in ['CREATED', 'PUBLISHED', 'SAME_AUTHOR', 'SAME_PUBLISHER']:
-                result = session.run(f"MATCH ()-[r:{rel_type}]->() RETURN count(r) as count")
-                stats[f'{rel_type.lower()}_relationships'] = result.single()['count']
-            
-            return stats
+        try:
+            with self.driver.session() as session:
+                stats = {}
+                
+                # Count nodes
+                for label in ['Work', 'Author', 'Publisher', 'Series']:
+                    result = session.run(f"MATCH (n:{label}) RETURN count(n) as count")
+                    stats[f'{label.lower()}_count'] = result.single()['count']
+                
+                # Count relationships
+                for rel_type in ['CREATED', 'PUBLISHED', 'SAME_AUTHOR', 'SAME_PUBLISHER']:
+                    result = session.run(f"MATCH ()-[r:{rel_type}]->() RETURN count(r) as count")
+                    stats[f'{rel_type.lower()}_relationships'] = result.single()['count']
+                
+                logger.info(f"Database statistics: {stats}")
+                return stats
+        except Exception as e:
+            logger.error(f"Error getting database statistics: {e}")
+            return {}

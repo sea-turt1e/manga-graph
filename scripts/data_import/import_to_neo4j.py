@@ -11,6 +11,7 @@ from neo4j import GraphDatabase
 from tqdm import tqdm
 import os
 from dotenv import load_dotenv
+from name_normalizer import normalize_creator_name, normalize_publisher_name, generate_normalized_id
 
 load_dotenv()
 
@@ -111,34 +112,41 @@ class Neo4jImporter:
                     for creator in creators:
                         creator_name = self._extract_value(creator)
                         if creator_name and isinstance(creator_name, str):
-                            # 作者ノードを作成
-                            author_id = f"author_{abs(hash(creator_name))}"
-                            session.run(
-                                """
-                                MERGE (a:Author {id: $id})
-                                SET a.name = $name, a.source = 'media_arts_db'
-                                WITH a
-                                MATCH (w:Work {id: $work_id})
-                                MERGE (a)-[:CREATED]->(w)
-                                """,
-                                id=author_id, name=creator_name, work_id=work_id
-                            )
+                            # 作者名を正規化
+                            normalized_creator_name = normalize_creator_name(creator_name)
+                            if normalized_creator_name:  # 正規化後に空でない場合のみ処理
+                                author_id = generate_normalized_id(normalized_creator_name, "author")
+                                session.run(
+                                    """
+                                    MERGE (a:Author {id: $id})
+                                    SET a.name = $normalized_name, a.original_name = $original_name, a.source = 'media_arts_db'
+                                    WITH a
+                                    MATCH (w:Work {id: $work_id})
+                                    MERGE (a)-[:CREATED]->(w)
+                                    """,
+                                    id=author_id, normalized_name=normalized_creator_name, 
+                                    original_name=creator_name, work_id=work_id
+                                )
                     
                     # 出版社を処理
                     publisher = item.get('schema:publisher', '')
                     publisher_name = self._extract_value(publisher)
                     if publisher_name and isinstance(publisher_name, str):
-                        publisher_id = f"publisher_{abs(hash(publisher_name))}"
-                        session.run(
-                            """
-                            MERGE (p:Publisher {id: $id})
-                            SET p.name = $name, p.source = 'media_arts_db'
-                            WITH p
-                            MATCH (w:Work {id: $work_id})
-                            MERGE (p)-[:PUBLISHED]->(w)
-                            """,
-                            id=publisher_id, name=publisher_name, work_id=work_id
-                        )
+                        # 出版社名を正規化
+                        normalized_publisher_name = normalize_publisher_name(publisher_name)
+                        if normalized_publisher_name:  # 正規化後に空でない場合のみ処理
+                            publisher_id = generate_normalized_id(normalized_publisher_name, "publisher")
+                            session.run(
+                                """
+                                MERGE (p:Publisher {id: $id})
+                                SET p.name = $normalized_name, p.original_name = $original_name, p.source = 'media_arts_db'
+                                WITH p
+                                MATCH (w:Work {id: $work_id})
+                                MERGE (p)-[:PUBLISHED]->(w)
+                                """,
+                                id=publisher_id, normalized_name=normalized_publisher_name,
+                                original_name=publisher_name, work_id=work_id
+                            )
                     
                 except Exception as e:
                     logger.error(f"Error importing item {item.get('@id', 'unknown')}: {e}")

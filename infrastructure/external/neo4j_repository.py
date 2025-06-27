@@ -2,9 +2,16 @@
 Neo4j database repository for manga graph data
 """
 import os
+import sys
+from pathlib import Path
 from typing import Dict, List, Any, Optional
 from neo4j import GraphDatabase
 import logging
+
+# Add scripts directory to path to import name_normalizer
+scripts_dir = Path(__file__).parent.parent.parent / "scripts" / "data_import"
+sys.path.append(str(scripts_dir))
+from name_normalizer import normalize_creator_name, normalize_publisher_name, generate_normalized_id
 
 logger = logging.getLogger(__name__)
 
@@ -305,14 +312,16 @@ class Neo4jMangaRepository:
             # Add authors as nodes and create edges
             for creator in work['creators']:
                 if creator:
-                    author_id = f"author_{abs(hash(creator))}"
-                    author_node = {
-                        'id': author_id,
-                        'label': creator,
-                        'type': 'author'
-                    }
-                    if author_node not in nodes:
-                        nodes.append(author_node)
+                    normalized_creator = normalize_creator_name(creator)
+                    if normalized_creator:
+                        author_id = generate_normalized_id(normalized_creator, "author")
+                        author_node = {
+                            'id': author_id,
+                            'label': normalized_creator,
+                            'type': 'author'
+                        }
+                        if author_node not in nodes:
+                            nodes.append(author_node)
                     
                     edge = {
                         'from': author_id,
@@ -325,14 +334,16 @@ class Neo4jMangaRepository:
             # Add publishers as nodes and create edges
             for publisher in work['publishers']:
                 if publisher:
-                    publisher_id = f"publisher_{abs(hash(publisher))}"
-                    publisher_node = {
-                        'id': publisher_id,
-                        'label': publisher,
-                        'type': 'publisher'
-                    }
-                    if publisher_node not in nodes:
-                        nodes.append(publisher_node)
+                    normalized_publisher = normalize_publisher_name(publisher)
+                    if normalized_publisher:
+                        publisher_id = generate_normalized_id(normalized_publisher, "publisher")
+                        publisher_node = {
+                            'id': publisher_id,
+                            'label': normalized_publisher,
+                            'type': 'publisher'
+                        }
+                        if publisher_node not in nodes:
+                            nodes.append(publisher_node)
                     
                     edge = {
                         'from': publisher_id,
@@ -359,7 +370,8 @@ class Neo4jMangaRepository:
                     nodes.append(related_node)
                 
                 # Create author relationship edge
-                author_id = f"author_{abs(hash(related['author_name']))}"
+                normalized_author = normalize_creator_name(related['author_name'])
+                author_id = generate_normalized_id(normalized_author, "author")
                 if any(n['id'] == author_id for n in nodes):
                     edge = {
                         'from': author_id,
@@ -388,12 +400,14 @@ class Neo4jMangaRepository:
                     # Add creators
                     for creator in related['creators']:
                         if creator:
-                            author_id = f"author_{abs(hash(creator))}"
-                            author_node = {
-                                'id': author_id,
-                                'label': creator,
-                                'type': 'author'
-                            }
+                            normalized_creator = normalize_creator_name(creator)
+                            if normalized_creator:
+                                author_id = generate_normalized_id(normalized_creator, "author")
+                                author_node = {
+                                    'id': author_id,
+                                    'label': normalized_creator,
+                                    'type': 'author'
+                                }
                             if not any(n['id'] == author_id for n in nodes):
                                 nodes.append(author_node)
                             
@@ -409,12 +423,14 @@ class Neo4jMangaRepository:
                     # Add publishers
                     # Handle single publisher from query result
                     if related.get('publisher_name'):
-                        publisher_id = f"publisher_{abs(hash(related['publisher_name']))}"
-                        publisher_node = {
-                            'id': publisher_id,
-                            'label': related['publisher_name'],
-                            'type': 'publisher'
-                        }
+                        normalized_publisher = normalize_publisher_name(related['publisher_name'])
+                        if normalized_publisher:
+                            publisher_id = generate_normalized_id(normalized_publisher, "publisher")
+                            publisher_node = {
+                                'id': publisher_id,
+                                'label': normalized_publisher,
+                                'type': 'publisher'
+                            }
                         if not any(n['id'] == publisher_id for n in nodes):
                             nodes.append(publisher_node)
                         
@@ -454,12 +470,14 @@ class Neo4jMangaRepository:
                     # Add creators of period-related works
                     for creator in related['creators']:
                         if creator:
-                            author_id = f"author_{abs(hash(creator))}"
-                            author_node = {
-                                'id': author_id,
-                                'label': creator,
-                                'type': 'author'
-                            }
+                            normalized_creator = normalize_creator_name(creator)
+                            if normalized_creator:
+                                author_id = generate_normalized_id(normalized_creator, "author")
+                                author_node = {
+                                    'id': author_id,
+                                    'label': normalized_creator,
+                                    'type': 'author'
+                                }
                             if not any(n['id'] == author_id for n in nodes):
                                 nodes.append(author_node)
                             

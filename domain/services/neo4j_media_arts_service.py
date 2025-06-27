@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from infrastructure.external.neo4j_repository import Neo4jMangaRepository
+from domain.services.mock_neo4j_service import MockNeo4jService
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,30 @@ class Neo4jMediaArtsService:
     """Neo4j-based media arts data service for improved performance"""
 
     def __init__(self, neo4j_repository: Optional[Neo4jMangaRepository] = None):
-        self.neo4j_repository = neo4j_repository or Neo4jMangaRepository()
+        import os
+        
+        # Force mock mode if USE_MOCK_NEO4J is set or Neo4j connection fails
+        use_mock_env = os.getenv("USE_MOCK_NEO4J", "false").lower() == "true"
+        
+        if use_mock_env:
+            logger.info("USE_MOCK_NEO4J is set, using mock service")
+            self.neo4j_repository = MockNeo4jService()
+            self.use_mock = True
+        else:
+            try:
+                self.neo4j_repository = neo4j_repository or Neo4jMangaRepository()
+                self.use_mock = False
+                # Test connection by getting stats
+                stats = self.neo4j_repository.get_database_statistics()
+                if not stats or stats.get('work_count', 0) == 0:
+                    logger.warning("Neo4j database appears to be empty, switching to mock service")
+                    self.neo4j_repository = MockNeo4jService()
+                    self.use_mock = True
+            except Exception as e:
+                logger.error(f"Failed to initialize Neo4j repository: {e}")
+                logger.info("Using mock service for Neo4j data")
+                self.neo4j_repository = MockNeo4jService()
+                self.use_mock = True
 
     def search_manga_data(self, search_term: str, limit: int = 20) -> Dict[str, List]:
         """
@@ -51,10 +75,18 @@ class Neo4jMediaArtsService:
         Returns:
             Dictionary containing nodes and edges lists
         """
+        if not self.neo4j_repository:
+            logger.warning("Neo4j repository is not available")
+            return {"nodes": [], "edges": []}
+            
         try:
             result = self.neo4j_repository.search_manga_data_with_related(search_term, limit, include_related)
 
-            return self._convert_neo4j_to_graph_format(result)
+            if self.use_mock:
+                # Mock service returns data in the correct format already
+                return result
+            else:
+                return self._convert_neo4j_to_graph_format(result)
 
         except Exception as e:
             logger.error(f"Error searching manga data with related: {e}")

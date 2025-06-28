@@ -11,7 +11,7 @@ import logging
 # Add scripts directory to path to import name_normalizer
 scripts_dir = Path(__file__).parent.parent.parent / "scripts" / "data_import"
 sys.path.append(str(scripts_dir))
-from name_normalizer import normalize_creator_name, normalize_publisher_name, generate_normalized_id
+from name_normalizer import normalize_creator_name, normalize_publisher_name, generate_normalized_id, normalize_and_split_creators
 
 logger = logging.getLogger(__name__)
 
@@ -312,24 +312,26 @@ class Neo4jMangaRepository:
             # Add authors as nodes and create edges
             for creator in work['creators']:
                 if creator:
-                    normalized_creator = normalize_creator_name(creator)
-                    if normalized_creator:
-                        author_id = generate_normalized_id(normalized_creator, "author")
-                        author_node = {
-                            'id': author_id,
-                            'label': normalized_creator,
-                            'type': 'author'
-                        }
-                        if author_node not in nodes:
-                            nodes.append(author_node)
-                    
-                    edge = {
-                        'from': author_id,
-                        'to': work['work_id'],
-                        'label': 'created',
-                        'type': 'created'
-                    }
-                    edges.append(edge)
+                    # Split multiple creators and normalize each one
+                    normalized_creators = normalize_and_split_creators(creator)
+                    for normalized_creator in normalized_creators:
+                        if normalized_creator:
+                            author_id = generate_normalized_id(normalized_creator, "author")
+                            author_node = {
+                                'id': author_id,
+                                'label': normalized_creator,
+                                'type': 'author'
+                            }
+                            if author_node not in nodes:
+                                nodes.append(author_node)
+                            
+                            edge = {
+                                'from': author_id,
+                                'to': work['work_id'],
+                                'label': 'created',
+                                'type': 'created'
+                            }
+                            edges.append(edge)
             
             # Add publishers as nodes and create edges
             for publisher in work['publishers']:
@@ -400,25 +402,27 @@ class Neo4jMangaRepository:
                     # Add creators
                     for creator in related['creators']:
                         if creator:
-                            normalized_creator = normalize_creator_name(creator)
-                            if normalized_creator:
-                                author_id = generate_normalized_id(normalized_creator, "author")
-                                author_node = {
-                                    'id': author_id,
-                                    'label': normalized_creator,
-                                    'type': 'author'
+                            # Split multiple creators and normalize each one
+                            normalized_creators = normalize_and_split_creators(creator)
+                            for normalized_creator in normalized_creators:
+                                if normalized_creator:
+                                    author_id = generate_normalized_id(normalized_creator, "author")
+                                    author_node = {
+                                        'id': author_id,
+                                        'label': normalized_creator,
+                                        'type': 'author'
+                                    }
+                                if not any(n['id'] == author_id for n in nodes):
+                                    nodes.append(author_node)
+                                
+                                edge = {
+                                    'from': author_id,
+                                    'to': related['work_id'],
+                                    'label': 'created',
+                                    'type': 'created'
                                 }
-                            if not any(n['id'] == author_id for n in nodes):
-                                nodes.append(author_node)
-                            
-                            edge = {
-                                'from': author_id,
-                                'to': related['work_id'],
-                                'label': 'created',
-                                'type': 'created'
-                            }
-                            if edge not in edges:
-                                edges.append(edge)
+                                if edge not in edges:
+                                    edges.append(edge)
                     
                     # Add publishers
                     # Handle single publisher from query result
@@ -470,25 +474,27 @@ class Neo4jMangaRepository:
                     # Add creators of period-related works
                     for creator in related['creators']:
                         if creator:
-                            normalized_creator = normalize_creator_name(creator)
-                            if normalized_creator:
-                                author_id = generate_normalized_id(normalized_creator, "author")
-                                author_node = {
-                                    'id': author_id,
-                                    'label': normalized_creator,
-                                    'type': 'author'
+                            # Split multiple creators and normalize each one
+                            normalized_creators = normalize_and_split_creators(creator)
+                            for normalized_creator in normalized_creators:
+                                if normalized_creator:
+                                    author_id = generate_normalized_id(normalized_creator, "author")
+                                    author_node = {
+                                        'id': author_id,
+                                        'label': normalized_creator,
+                                        'type': 'author'
+                                    }
+                                if not any(n['id'] == author_id for n in nodes):
+                                    nodes.append(author_node)
+                                
+                                edge = {
+                                    'from': author_id,
+                                    'to': related['work_id'],
+                                    'label': 'created',
+                                    'type': 'created'
                                 }
-                            if not any(n['id'] == author_id for n in nodes):
-                                nodes.append(author_node)
-                            
-                            edge = {
-                                'from': author_id,
-                                'to': related['work_id'],
-                                'label': 'created',
-                                'type': 'created'
-                            }
-                            if edge not in edges:
-                                edges.append(edge)
+                                if edge not in edges:
+                                    edges.append(edge)
         
         logger.info(f"Returning {len(nodes)} nodes and {len(edges)} edges for search term: '{search_term}'")
         return {

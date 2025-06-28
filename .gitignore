@@ -201,3 +201,7 @@ data/mediaarts/
 *.zip
 *.json
 !data/mediaarts/.gitkeep
+
+# Cache directories
+cache/
+!cache/.gitkeep

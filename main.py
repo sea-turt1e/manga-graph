@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from presentation.api import manga_router, media_arts_router, neo4j_router
+from presentation.api import manga_router, media_arts_router, neo4j_router, cover_router
 
 load_dotenv()
 
@@ -20,6 +20,7 @@ app.add_middleware(
 app.include_router(manga_router)
 app.include_router(media_arts_router)
 app.include_router(neo4j_router)
+app.include_router(cover_router)
 
 
 @app.get("/")

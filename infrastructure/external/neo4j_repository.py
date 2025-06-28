@@ -523,3 +523,77 @@ class Neo4jMangaRepository:
         except Exception as e:
             logger.error(f"Error getting database statistics: {e}")
             return {}
+    
+    def get_work_by_id(self, work_id: str) -> Optional[Dict[str, Any]]:
+        """Get work details by ID"""
+        logger.info(f"Getting work by ID: {work_id}")
+        
+        with self.driver.session() as session:
+            query = """
+            MATCH (w:Work {id: $work_id})
+            OPTIONAL MATCH (a:Author)-[:CREATED]->(w)
+            OPTIONAL MATCH (p:Publisher)-[:PUBLISHED]->(w)
+            RETURN w, 
+                   collect(DISTINCT a.name) as authors,
+                   collect(DISTINCT p.name) as publishers
+            """
+            
+            result = session.run(query, work_id=work_id)
+            record = result.single()
+            
+            if record:
+                work = record["w"]
+                return {
+                    "id": work["id"],
+                    "title": work.get("title", ""),
+                    "isbn": work.get("isbn", ""),
+                    "genre": work.get("genre", ""),
+                    "published_date": work.get("published_date", ""),
+                    "cover_image_url": work.get("cover_image_url", ""),
+                    "publisher": record["publishers"][0] if record["publishers"] else "",
+                    "authors": record["authors"]
+                }
+            
+            return None
+    
+    def update_work_cover_image(self, work_id: str, cover_url: str) -> bool:
+        """Update work cover image URL"""
+        logger.info(f"Updating cover image for work {work_id}: {cover_url}")
+        
+        with self.driver.session() as session:
+            query = """
+            MATCH (w:Work {id: $work_id})
+            SET w.cover_image_url = $cover_url
+            RETURN w.id as updated_id
+            """
+            
+            result = session.run(query, work_id=work_id, cover_url=cover_url)
+            record = result.single()
+            
+            return record is not None
+    
+    def get_works_needing_covers(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get works that have ISBN but no cover image"""
+        logger.info(f"Getting works needing covers, limit: {limit}")
+        
+        with self.driver.session() as session:
+            query = """
+            MATCH (w:Work)
+            WHERE w.isbn IS NOT NULL 
+              AND w.isbn <> ''
+              AND (w.cover_image_url IS NULL OR w.cover_image_url = '')
+            RETURN w.id as id, w.title as title, w.isbn as isbn
+            LIMIT $limit
+            """
+            
+            result = session.run(query, limit=limit)
+            
+            works = []
+            for record in result:
+                works.append({
+                    "id": record["id"],
+                    "title": record["title"],
+                    "isbn": record["isbn"]
+                })
+            
+            return works

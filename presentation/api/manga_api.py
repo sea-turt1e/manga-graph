@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from domain.services import MediaArtsDataService
 from domain.services.neo4j_media_arts_service import Neo4jMediaArtsService
+from domain.services.cover_image_service import get_cover_service
+from domain.services.cover_cache_service import get_cache_service
 from domain.use_cases import SearchMangaUseCase
 from infrastructure.database import Neo4jMangaRepository
 from presentation.schemas import (
@@ -44,6 +46,16 @@ def get_media_arts_service():
 def get_neo4j_media_arts_service():
     """Dependency to get Neo4j media arts data service"""
     return Neo4jMediaArtsService()
+
+
+def get_cover_image_service():
+    """Dependency to get cover image service"""
+    return get_cover_service()
+
+
+def get_cover_cache_service():
+    """Dependency to get cover cache service"""
+    return get_cache_service()
 
 
 @router.post("/search", response_model=GraphResponse)
@@ -129,6 +141,8 @@ async def get_works(repo: Neo4jMangaRepository = Depends(get_manga_repository)):
                 publication_date=work.publication_date.isoformat() if work.publication_date else None,
                 genre=work.genre,
                 description=work.description,
+                isbn=work.isbn,
+                cover_image_url=work.cover_image_url,
             )
             for work in works
         ]
@@ -346,5 +360,235 @@ async def get_neo4j_stats(
     try:
         stats = neo4j_service.get_database_statistics()
         return {"status": "success", "data": stats}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Cover Image Endpoints
+cover_router = APIRouter(prefix="/api/v1/covers", tags=["cover-images"])
+
+
+@cover_router.get("/work/{work_id:path}")
+async def get_work_cover(
+    work_id: str,
+    cover_service = Depends(get_cover_image_service),
+    neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
+):
+    """作品の書影URLを取得"""
+    try:
+        # Get work details from Neo4j
+        work_data = neo4j_service.get_work_by_id(work_id)
+        if not work_data:
+            raise HTTPException(status_code=404, detail="Work not found")
+        
+        # Try to get cover using existing cover_image_url first
+        if work_data.get('cover_image_url'):
+            if cover_service.validate_cover_url(work_data['cover_image_url']):
+                return {
+                    "work_id": work_id,
+                    "cover_url": work_data['cover_image_url'],
+                    "source": "database",
+                    "has_real_cover": True
+                }
+        
+        # Try to get cover using ISBN
+        isbn = work_data.get('isbn')
+        title = work_data.get('title')
+        genre = work_data.get('genre')
+        publisher = work_data.get('publisher')
+        
+        cover_result = cover_service.get_cover_with_fallback(
+            isbn=isbn,
+            title=title,
+            genre=genre,
+            publisher=publisher
+        )
+        
+        return {
+            "work_id": work_id,
+            **cover_result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@cover_router.post("/work/{work_id:path}/update")
+async def update_work_cover(
+    work_id: str,
+    cover_service = Depends(get_cover_image_service),
+    neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
+):
+    """作品の書影URLを更新"""
+    try:
+        # Get work details from Neo4j
+        work_data = neo4j_service.get_work_by_id(work_id)
+        if not work_data:
+            raise HTTPException(status_code=404, detail="Work not found")
+        
+        isbn = work_data.get('isbn')
+        title = work_data.get('title')
+        
+        if not isbn:
+            raise HTTPException(status_code=400, detail="Work has no ISBN for cover lookup")
+        
+        # Get cover image URL
+        cover_url = cover_service.get_cover_image_url(isbn, title)
+        
+        if cover_url:
+            # Update in database
+            success = neo4j_service.update_work_cover_image(work_id, cover_url)
+            if success:
+                return {
+                    "work_id": work_id,
+                    "cover_url": cover_url,
+                    "status": "updated",
+                    "source": "api"
+                }
+            else:
+                raise HTTPException(status_code=500, detail="Failed to update cover in database")
+        else:
+            raise HTTPException(status_code=404, detail="No cover image found for this work")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@cover_router.post("/bulk-update")
+async def bulk_update_covers(
+    limit: int = Query(100, description="更新する作品数の上限"),
+    cover_service = Depends(get_cover_image_service),
+    neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
+):
+    """ISBNを持つ作品の書影を一括更新"""
+    try:
+        # Get works with ISBN but no cover image
+        works = neo4j_service.get_works_needing_covers(limit)
+        
+        updated_count = 0
+        failed_count = 0
+        results = []
+        
+        for work in works:
+            try:
+                work_id = work['id']
+                isbn = work['isbn']
+                title = work.get('title', '')
+                
+                cover_url = cover_service.get_cover_image_url(isbn, title)
+                
+                if cover_url:
+                    success = neo4j_service.update_work_cover_image(work_id, cover_url)
+                    if success:
+                        updated_count += 1
+                        results.append({
+                            "work_id": work_id,
+                            "title": title,
+                            "cover_url": cover_url,
+                            "status": "updated"
+                        })
+                    else:
+                        failed_count += 1
+                        results.append({
+                            "work_id": work_id,
+                            "title": title,
+                            "status": "database_error"
+                        })
+                else:
+                    failed_count += 1
+                    results.append({
+                        "work_id": work_id,
+                        "title": title,
+                        "status": "no_cover_found"
+                    })
+                    
+                # Rate limiting
+                import time
+                time.sleep(0.1)
+                
+            except Exception as e:
+                failed_count += 1
+                results.append({
+                    "work_id": work.get('id', 'unknown'),
+                    "title": work.get('title', 'unknown'),
+                    "status": "error",
+                    "error": str(e)
+                })
+        
+        return {
+            "total_processed": len(works),
+            "updated_count": updated_count,
+            "failed_count": failed_count,
+            "results": results
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@cover_router.get("/cache/stats")
+async def get_cache_stats(
+    cache_service = Depends(get_cover_cache_service),
+):
+    """キャッシュの統計情報を取得"""
+    try:
+        stats = cache_service.get_cache_stats()
+        return {
+            "status": "success",
+            "cache_stats": stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@cover_router.post("/cache/cleanup")
+async def cleanup_cache(
+    cache_service = Depends(get_cover_cache_service),
+):
+    """期限切れのキャッシュエントリをクリーンアップ"""
+    try:
+        cache_service.cleanup_expired()
+        stats = cache_service.get_cache_stats()
+        return {
+            "status": "cleanup_completed",
+            "cache_stats": stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@cover_router.delete("/cache/clear")
+async def clear_cache(
+    cache_service = Depends(get_cover_cache_service),
+):
+    """全てのキャッシュをクリア"""
+    try:
+        cache_service.clear_cache()
+        return {
+            "status": "cache_cleared",
+            "message": "All cache entries have been cleared"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@cover_router.delete("/cache/invalidate/{isbn}")
+async def invalidate_cache_entry(
+    isbn: str,
+    title: Optional[str] = Query(None, description="作品タイトル（オプション）"),
+    cache_service = Depends(get_cover_cache_service),
+):
+    """特定のISBNのキャッシュエントリを無効化"""
+    try:
+        cache_service.invalidate_cache(isbn, title)
+        return {
+            "status": "cache_invalidated",
+            "isbn": isbn,
+            "title": title
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

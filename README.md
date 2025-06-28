@@ -138,7 +138,7 @@ python -m pytest tests/e2e/
 
 ## ライセンス
 
-MIT License
+Apache License 2.0
 
 ## 貢献
 

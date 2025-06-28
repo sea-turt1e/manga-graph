@@ -197,15 +197,40 @@ class Neo4jImporter:
                     if series_name:
                         # シリーズ名から数字を除去してベースタイトルを取得
                         base_title = series_name.strip()
-                        session.run(
-                            """
-                            MATCH (s:Series {id: $series_id})
-                            MATCH (w:Work)
-                            WHERE w.title CONTAINS $base_title
-                            MERGE (s)-[:CONTAINS]->(w)
-                            """,
-                            series_id=series_id, base_title=base_title
-                        )
+                        
+                        # 短すぎるシリーズ名（3文字以下）は部分一致を避ける
+                        if len(base_title) <= 3:
+                            # 完全一致または先頭一致のみ
+                            session.run(
+                                """
+                                MATCH (s:Series {id: $series_id})
+                                MATCH (w:Work)
+                                WHERE w.title = $base_title 
+                                   OR w.title STARTS WITH ($base_title + ' ')
+                                   OR w.title STARTS WITH ($base_title + '　')
+                                MERGE (s)-[:CONTAINS]->(w)
+                                """,
+                                series_id=series_id, base_title=base_title
+                            )
+                        else:
+                            # 通常のシリーズ名は、より厳密なマッチング
+                            session.run(
+                                """
+                                MATCH (s:Series {id: $series_id})
+                                MATCH (w:Work)
+                                WHERE w.title CONTAINS $base_title
+                                   AND (
+                                       w.title = $base_title
+                                       OR w.title STARTS WITH ($base_title + ' ')
+                                       OR w.title STARTS WITH ($base_title + '　')
+                                       OR w.title =~ $pattern
+                                   )
+                                MERGE (s)-[:CONTAINS]->(w)
+                                """,
+                                series_id=series_id, 
+                                base_title=base_title,
+                                pattern=f".*{base_title}\\s*(\\d+|第\\d+巻|\\(\\d+\\)|vol\\.\\s*\\d+|VOLUME\\s*\\d+).*"
+                            )
                     
                 except Exception as e:
                     logger.error(f"Error importing series {item.get('@id', 'unknown')}: {e}")

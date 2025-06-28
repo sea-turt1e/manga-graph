@@ -226,7 +226,7 @@ class Neo4jMediaArtsService:
 
                 # For series, include volume information
                 if node_data.get("is_series"):
-                    properties["series_volumes"] = node_data.get("volume", "")
+                    properties["series_volumes"] = node_data.get("series_volumes", node_data.get("volume", ""))
                     properties["date_range"] = node_data.get("published_date", "")
 
                 # Publishers and creators

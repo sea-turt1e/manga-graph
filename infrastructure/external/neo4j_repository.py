@@ -156,19 +156,28 @@ class Neo4jMangaRepository:
             # Convert groups to single works representing the series
             consolidated_works = []
             for group_data in series_groups.values():
-                # 複数の作品がある場合はシリーズとして統合
+                # 複数の作品がある場合は最初の巻（最も古い出版日）のみを返す
                 if len(group_data['works']) > 1:
+                    # 出版日でソートして最初の作品を選択
+                    sorted_works = sorted(group_data['works'], 
+                                        key=lambda x: x['published_date'] if x['published_date'] else '9999-99-99')
+                    first_work = sorted_works[0]
+                    
+                    # タイトルから巻数表記を除去
+                    base_title = self._extract_base_title(first_work['title'])
+                    
                     series_work = {
-                        'work_id': group_data['series_id'],
-                        'title': f"{group_data['series_name']} (シリーズ)",
-                        'published_date': f"{group_data['earliest_date']} - {group_data['latest_date']}",
-                        'creators': list(group_data['creators']),
-                        'publishers': list(group_data['publishers']),
-                        'genre': group_data['works'][0]['genre'],  # 最初の作品のジャンルを使用
-                        'isbn': None,  # シリーズ全体のISBNはなし
-                        'volume': f"{len(group_data['works'])}巻",
+                        'work_id': first_work['work_id'],
+                        'title': base_title,  # 巻数を除去したタイトル
+                        'published_date': first_work['published_date'],
+                        'creators': first_work['creators'],
+                        'publishers': first_work['publishers'],
+                        'genre': first_work['genre'],
+                        'isbn': first_work['isbn'],
+                        'volume': first_work['volume'],
                         'is_series': True,
                         'work_count': len(group_data['works']),
+                        'series_volumes': f"{len(group_data['works'])}巻",  # シリーズ全体の巻数情報
                         'individual_works': group_data['works']  # 個別作品の情報を保持
                     }
                     consolidated_works.append(series_work)

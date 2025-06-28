@@ -44,6 +44,8 @@ class WorkResponse(BaseModel):
     publication_date: Optional[str] = None
     genre: Optional[str] = None
     description: Optional[str] = None
+    isbn: Optional[str] = None
+    cover_image_url: Optional[str] = None
 
 
 class MagazineResponse(BaseModel):

@@ -11,7 +11,7 @@ from neo4j import GraphDatabase
 from tqdm import tqdm
 import os
 from dotenv import load_dotenv
-from name_normalizer import normalize_creator_name, normalize_publisher_name, generate_normalized_id
+from name_normalizer import normalize_creator_name, normalize_publisher_name, generate_normalized_id, normalize_and_split_creators
 
 load_dotenv()
 
@@ -112,21 +112,22 @@ class Neo4jImporter:
                     for creator in creators:
                         creator_name = self._extract_value(creator)
                         if creator_name and isinstance(creator_name, str):
-                            # 作者名を正規化
-                            normalized_creator_name = normalize_creator_name(creator_name)
-                            if normalized_creator_name:  # 正規化後に空でない場合のみ処理
-                                author_id = generate_normalized_id(normalized_creator_name, "author")
-                                session.run(
-                                    """
-                                    MERGE (a:Author {id: $id})
-                                    SET a.name = $normalized_name, a.original_name = $original_name, a.source = 'media_arts_db'
-                                    WITH a
-                                    MATCH (w:Work {id: $work_id})
-                                    MERGE (a)-[:CREATED]->(w)
-                                    """,
-                                    id=author_id, normalized_name=normalized_creator_name, 
-                                    original_name=creator_name, work_id=work_id
-                                )
+                            # 複数著者を分割して正規化
+                            normalized_creator_names = normalize_and_split_creators(creator_name)
+                            for normalized_creator_name in normalized_creator_names:
+                                if normalized_creator_name:  # 正規化後に空でない場合のみ処理
+                                    author_id = generate_normalized_id(normalized_creator_name, "author")
+                                    session.run(
+                                        """
+                                        MERGE (a:Author {id: $id})
+                                        SET a.name = $normalized_name, a.original_name = $original_name, a.source = 'media_arts_db'
+                                        WITH a
+                                        MATCH (w:Work {id: $work_id})
+                                        MERGE (a)-[:CREATED]->(w)
+                                        """,
+                                        id=author_id, normalized_name=normalized_creator_name, 
+                                        original_name=creator_name, work_id=work_id
+                                    )
                     
                     # 出版社を処理
                     publisher = item.get('schema:publisher', '')

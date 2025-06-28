@@ -164,6 +164,30 @@ class Neo4jMediaArtsService:
         except Exception as e:
             logger.error(f"Error getting database statistics: {e}")
             return {}
+    
+    def get_work_by_id(self, work_id: str) -> Optional[Dict[str, Any]]:
+        """Get work details by ID"""
+        try:
+            return self.neo4j_repository.get_work_by_id(work_id)
+        except Exception as e:
+            logger.error(f"Error getting work by ID {work_id}: {e}")
+            return None
+    
+    def update_work_cover_image(self, work_id: str, cover_url: str) -> bool:
+        """Update work cover image URL"""
+        try:
+            return self.neo4j_repository.update_work_cover_image(work_id, cover_url)
+        except Exception as e:
+            logger.error(f"Error updating cover image for work {work_id}: {e}")
+            return False
+    
+    def get_works_needing_covers(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get works that have ISBN but no cover image"""
+        try:
+            return self.neo4j_repository.get_works_needing_covers(limit)
+        except Exception as e:
+            logger.error(f"Error getting works needing covers: {e}")
+            return []
 
     def _convert_neo4j_to_graph_format(self, neo4j_result: Dict[str, Any]) -> Dict[str, List]:
         """

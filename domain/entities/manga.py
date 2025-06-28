@@ -28,6 +28,8 @@ class Work:
     publication_date: Optional[datetime] = None
     genre: Optional[str] = None
     description: Optional[str] = None
+    isbn: Optional[str] = None
+    cover_image_url: Optional[str] = None
 
 
 @dataclass

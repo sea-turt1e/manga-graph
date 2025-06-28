@@ -11,7 +11,7 @@ import logging
 # Add scripts directory to path to import name_normalizer
 scripts_dir = Path(__file__).parent.parent.parent / "scripts" / "data_import"
 sys.path.append(str(scripts_dir))
-from name_normalizer import normalize_creator_name, normalize_publisher_name, generate_normalized_id
+from name_normalizer import normalize_creator_name, normalize_publisher_name, generate_normalized_id, normalize_and_split_creators
 
 logger = logging.getLogger(__name__)
 
@@ -312,24 +312,26 @@ class Neo4jMangaRepository:
             # Add authors as nodes and create edges
             for creator in work['creators']:
                 if creator:
-                    normalized_creator = normalize_creator_name(creator)
-                    if normalized_creator:
-                        author_id = generate_normalized_id(normalized_creator, "author")
-                        author_node = {
-                            'id': author_id,
-                            'label': normalized_creator,
-                            'type': 'author'
-                        }
-                        if author_node not in nodes:
-                            nodes.append(author_node)
-                    
-                    edge = {
-                        'from': author_id,
-                        'to': work['work_id'],
-                        'label': 'created',
-                        'type': 'created'
-                    }
-                    edges.append(edge)
+                    # Split multiple creators and normalize each one
+                    normalized_creators = normalize_and_split_creators(creator)
+                    for normalized_creator in normalized_creators:
+                        if normalized_creator:
+                            author_id = generate_normalized_id(normalized_creator, "author")
+                            author_node = {
+                                'id': author_id,
+                                'label': normalized_creator,
+                                'type': 'author'
+                            }
+                            if author_node not in nodes:
+                                nodes.append(author_node)
+                            
+                            edge = {
+                                'from': author_id,
+                                'to': work['work_id'],
+                                'label': 'created',
+                                'type': 'created'
+                            }
+                            edges.append(edge)
             
             # Add publishers as nodes and create edges
             for publisher in work['publishers']:
@@ -400,25 +402,27 @@ class Neo4jMangaRepository:
                     # Add creators
                     for creator in related['creators']:
                         if creator:
-                            normalized_creator = normalize_creator_name(creator)
-                            if normalized_creator:
-                                author_id = generate_normalized_id(normalized_creator, "author")
-                                author_node = {
-                                    'id': author_id,
-                                    'label': normalized_creator,
-                                    'type': 'author'
+                            # Split multiple creators and normalize each one
+                            normalized_creators = normalize_and_split_creators(creator)
+                            for normalized_creator in normalized_creators:
+                                if normalized_creator:
+                                    author_id = generate_normalized_id(normalized_creator, "author")
+                                    author_node = {
+                                        'id': author_id,
+                                        'label': normalized_creator,
+                                        'type': 'author'
+                                    }
+                                if not any(n['id'] == author_id for n in nodes):
+                                    nodes.append(author_node)
+                                
+                                edge = {
+                                    'from': author_id,
+                                    'to': related['work_id'],
+                                    'label': 'created',
+                                    'type': 'created'
                                 }
-                            if not any(n['id'] == author_id for n in nodes):
-                                nodes.append(author_node)
-                            
-                            edge = {
-                                'from': author_id,
-                                'to': related['work_id'],
-                                'label': 'created',
-                                'type': 'created'
-                            }
-                            if edge not in edges:
-                                edges.append(edge)
+                                if edge not in edges:
+                                    edges.append(edge)
                     
                     # Add publishers
                     # Handle single publisher from query result
@@ -470,25 +474,27 @@ class Neo4jMangaRepository:
                     # Add creators of period-related works
                     for creator in related['creators']:
                         if creator:
-                            normalized_creator = normalize_creator_name(creator)
-                            if normalized_creator:
-                                author_id = generate_normalized_id(normalized_creator, "author")
-                                author_node = {
-                                    'id': author_id,
-                                    'label': normalized_creator,
-                                    'type': 'author'
+                            # Split multiple creators and normalize each one
+                            normalized_creators = normalize_and_split_creators(creator)
+                            for normalized_creator in normalized_creators:
+                                if normalized_creator:
+                                    author_id = generate_normalized_id(normalized_creator, "author")
+                                    author_node = {
+                                        'id': author_id,
+                                        'label': normalized_creator,
+                                        'type': 'author'
+                                    }
+                                if not any(n['id'] == author_id for n in nodes):
+                                    nodes.append(author_node)
+                                
+                                edge = {
+                                    'from': author_id,
+                                    'to': related['work_id'],
+                                    'label': 'created',
+                                    'type': 'created'
                                 }
-                            if not any(n['id'] == author_id for n in nodes):
-                                nodes.append(author_node)
-                            
-                            edge = {
-                                'from': author_id,
-                                'to': related['work_id'],
-                                'label': 'created',
-                                'type': 'created'
-                            }
-                            if edge not in edges:
-                                edges.append(edge)
+                                if edge not in edges:
+                                    edges.append(edge)
         
         logger.info(f"Returning {len(nodes)} nodes and {len(edges)} edges for search term: '{search_term}'")
         return {
@@ -517,3 +523,77 @@ class Neo4jMangaRepository:
         except Exception as e:
             logger.error(f"Error getting database statistics: {e}")
             return {}
+    
+    def get_work_by_id(self, work_id: str) -> Optional[Dict[str, Any]]:
+        """Get work details by ID"""
+        logger.info(f"Getting work by ID: {work_id}")
+        
+        with self.driver.session() as session:
+            query = """
+            MATCH (w:Work {id: $work_id})
+            OPTIONAL MATCH (a:Author)-[:CREATED]->(w)
+            OPTIONAL MATCH (p:Publisher)-[:PUBLISHED]->(w)
+            RETURN w, 
+                   collect(DISTINCT a.name) as authors,
+                   collect(DISTINCT p.name) as publishers
+            """
+            
+            result = session.run(query, work_id=work_id)
+            record = result.single()
+            
+            if record:
+                work = record["w"]
+                return {
+                    "id": work["id"],
+                    "title": work.get("title", ""),
+                    "isbn": work.get("isbn", ""),
+                    "genre": work.get("genre", ""),
+                    "published_date": work.get("published_date", ""),
+                    "cover_image_url": work.get("cover_image_url", ""),
+                    "publisher": record["publishers"][0] if record["publishers"] else "",
+                    "authors": record["authors"]
+                }
+            
+            return None
+    
+    def update_work_cover_image(self, work_id: str, cover_url: str) -> bool:
+        """Update work cover image URL"""
+        logger.info(f"Updating cover image for work {work_id}: {cover_url}")
+        
+        with self.driver.session() as session:
+            query = """
+            MATCH (w:Work {id: $work_id})
+            SET w.cover_image_url = $cover_url
+            RETURN w.id as updated_id
+            """
+            
+            result = session.run(query, work_id=work_id, cover_url=cover_url)
+            record = result.single()
+            
+            return record is not None
+    
+    def get_works_needing_covers(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get works that have ISBN but no cover image"""
+        logger.info(f"Getting works needing covers, limit: {limit}")
+        
+        with self.driver.session() as session:
+            query = """
+            MATCH (w:Work)
+            WHERE w.isbn IS NOT NULL 
+              AND w.isbn <> ''
+              AND (w.cover_image_url IS NULL OR w.cover_image_url = '')
+            RETURN w.id as id, w.title as title, w.isbn as isbn
+            LIMIT $limit
+            """
+            
+            result = session.run(query, limit=limit)
+            
+            works = []
+            for record in result:
+                works.append({
+                    "id": record["id"],
+                    "title": record["title"],
+                    "isbn": record["isbn"]
+                })
+            
+            return works

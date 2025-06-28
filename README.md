@@ -1,30 +1,25 @@
 # Manga Graph Visualizer
 
-メディア芸術データベースを活用した漫画の関係性を可視化するWebアプリケーションです。
+メディア芸術データベースを活用した漫画の関係性を可視化するAPIサーバーです。
 
 ## 機能
 
-- 📚 作品検索によるグラフ可視化
-- 👨‍🎨 作者と作品の関係性表示
+- 📚 作品検索API
+- 👨‍🎨 作者と作品の関係性データ提供
 - 📖 同じ雑誌に掲載された作品の関係性
-- 🔍 動的な検索とフィルタリング
-- 📊 インタラクティブなグラフ操作
+- 🔍 柔軟な検索とフィルタリング
+- 📊 グラフデータの提供（Neo4j）
 
 ## 技術スタック
-
-### フロントエンド
-- Vue.js 3
-- Cytoscape.js (グラフ可視化)
-- Vite (ビルドツール)
 
 ### バックエンド
 - Python 3.12.7
 - FastAPI
 - Neo4j (グラフデータベース)
+- CleanArchitecture設計
 
 ### インフラ
 - Docker & Docker Compose
-- AWS (デプロイ用)
 
 ## セットアップ
 
@@ -43,45 +38,47 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
-### 3. サンプルデータの作成と投入
+### 3. データの準備と投入
 ```bash
-# サンプルデータを作成
-cd scripts
-python create_sample_data.py
+# メディア芸術データベースからデータをダウンロード
+python scripts/data_import/download_mediaarts_data.py
+
+# データを解析
+python scripts/data_import/analyze_data_structure.py
 
 # Neo4jにデータを投入
-python neo4j_importer.py
+python import_full_data.py
 ```
 
 ### 4. アプリケーションへのアクセス
-- フロントエンド: http://localhost:3000
 - バックエンドAPI: http://localhost:8000
 - Neo4j Browser: http://localhost:7474 (neo4j/password)
+- API Documentation: http://localhost:8000/docs
 
 ## 開発
 
-### フロントエンド開発
+### 開発環境の起動
 ```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### バックエンド開発
-```bash
-cd backend
+# 依存関係のインストール
 pip install -r requirements.txt
-uvicorn main:app --reload
+
+# 開発サーバー起動
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### データ収集
+### データ関連の操作
 ```bash
-cd scripts
 # メディア芸術データベースからデータを取得
-python media_arts_scraper.py
+python scripts/data_import/download_mediaarts_data.py
 
-# Neo4jにデータを投入
-python neo4j_importer.py
+# サンプルデータの作成
+python scripts/create_sample_data.py
+
+# テストデータの作成
+python scripts/data_import/create_test_data.py
+
+# データベースマイグレーション
+python scripts/data_import/migrate_database.py
 ```
 
 ## API エンドポイント
@@ -92,22 +89,52 @@ python neo4j_importer.py
 - `GET /works` - 作品一覧  
 - `GET /magazines` - 雑誌一覧
 
-## 使い方
+詳細なAPI仕様は http://localhost:8000/docs で確認できます。
 
-1. 左側の検索パネルで作品名を入力
-2. 検索深度を調整（1-3）
-3. 検索ボタンをクリック
-4. グラフでノードやエッジをクリックして詳細を確認
-5. グラフの操作:
-   - ドラッグ: ノードの移動
-   - ズーム: マウスホイール
-   - フィット: 画面にフィットボタン
-   - リセット: レイアウトリセットボタン
+## プロジェクト構造
+
+```
+manga-graph/
+├── domain/              # ドメイン層
+│   ├── entities/        # エンティティ
+│   ├── repositories/    # リポジトリインターフェース
+│   ├── services/        # ドメインサービス
+│   └── use_cases/       # ユースケース
+├── infrastructure/      # インフラ層
+│   ├── database/        # データベース実装
+│   └── external/        # 外部API実装
+├── presentation/        # プレゼンテーション層
+│   ├── api/            # APIエンドポイント
+│   └── schemas/        # リクエスト/レスポンススキーマ
+├── scripts/            # データ投入・管理スクリプト
+│   └── data_import/    # データインポート関連
+├── tests/              # テスト
+│   ├── unit/           # ユニットテスト
+│   ├── integration/    # 統合テスト
+│   └── e2e/            # E2Eテスト
+└── static/             # 静的ファイル
+```
 
 ## データソース
 
 - [メディア芸術データベース](https://mediaarts-db.artmuseums.go.jp/)
-- SPARQLエンドポイントを使用してデータを取得
+- メタデータファイル（JSON形式）を使用してデータを取得
+
+## テスト
+
+```bash
+# 全テストの実行
+python -m pytest tests/
+
+# ユニットテストのみ
+python -m pytest tests/unit/
+
+# 統合テストのみ
+python -m pytest tests/integration/
+
+# E2Eテストのみ
+python -m pytest tests/e2e/
+```
 
 ## ライセンス
 
@@ -116,14 +143,3 @@ MIT License
 ## 貢献
 
 プルリクエストやIssueの報告をお待ちしています。
-
-## AWS デプロイ
-
-詳細なデプロイ手順については、デプロイ用のドキュメントを参照してください。
-
-### 必要なAWSリソース
-- EC2インスタンス
-- RDS (Neo4j用)
-- S3 (静的ファイル用)
-- CloudFront (CDN)
-- Route53 (DNS)

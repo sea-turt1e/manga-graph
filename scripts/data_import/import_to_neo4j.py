@@ -11,7 +11,7 @@ from neo4j import GraphDatabase
 from tqdm import tqdm
 import os
 from dotenv import load_dotenv
-from name_normalizer import normalize_creator_name, normalize_publisher_name, generate_normalized_id, normalize_and_split_creators
+from scripts.data_import.name_normalizer import normalize_creator_name, normalize_publisher_name, generate_normalized_id, normalize_and_split_creators
 
 load_dotenv()
 

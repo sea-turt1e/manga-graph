@@ -140,6 +140,14 @@ python -m pytest tests/e2e/
 
 Apache License 2.0
 
+## データセット
+このアプリケーションは、以下のデータセットを使用しています：
+- 文化庁メディア芸術データベースのデータ
+  - データの詳細は、[文化庁メディア芸術データベース](https://mediaarts-db.bunka.go.jp/)をご覧ください。
+- OpenBDのデータ
+  - データの詳細は、[OpenBD](https://openbd.jp/)をご覧ください。
+
+
 ## 貢献
 
 プルリクエストやIssueの報告をお待ちしています。

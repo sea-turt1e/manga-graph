@@ -307,16 +307,20 @@ class Neo4jMangaRepository:
         
         nodes = []
         edges = []
+        node_ids_seen = set()  # Track node IDs to prevent duplicates
+        edge_ids_seen = set()  # Track edge IDs to prevent duplicates
         
         # Add main works as nodes
         for work in main_works:
-            node = {
-                'id': work['work_id'],
-                'label': work['title'],
-                'type': 'work',
-                'data': work
-            }
-            nodes.append(node)
+            if work['work_id'] not in node_ids_seen:
+                node = {
+                    'id': work['work_id'],
+                    'label': work['title'],
+                    'type': 'work',
+                    'data': work
+                }
+                nodes.append(node)
+                node_ids_seen.add(work['work_id'])
             
             # Add authors as nodes and create edges
             for creator in work['creators']:
@@ -326,21 +330,25 @@ class Neo4jMangaRepository:
                     for normalized_creator in normalized_creators:
                         if normalized_creator:
                             author_id = generate_normalized_id(normalized_creator, "author")
-                            author_node = {
-                                'id': author_id,
-                                'label': normalized_creator,
-                                'type': 'author'
-                            }
-                            if author_node not in nodes:
+                            if author_id not in node_ids_seen:
+                                author_node = {
+                                    'id': author_id,
+                                    'label': normalized_creator,
+                                    'type': 'author'
+                                }
                                 nodes.append(author_node)
+                                node_ids_seen.add(author_id)
                             
-                            edge = {
-                                'from': author_id,
-                                'to': work['work_id'],
-                                'label': 'created',
-                                'type': 'created'
-                            }
-                            edges.append(edge)
+                            edge_id = f"{author_id}-created-{work['work_id']}"
+                            if edge_id not in edge_ids_seen:
+                                edge = {
+                                    'from': author_id,
+                                    'to': work['work_id'],
+                                    'label': 'created',
+                                    'type': 'created'
+                                }
+                                edges.append(edge)
+                                edge_ids_seen.add(edge_id)
             
             # Add publishers as nodes and create edges
             for publisher in work['publishers']:
@@ -348,21 +356,25 @@ class Neo4jMangaRepository:
                     normalized_publisher = normalize_publisher_name(publisher)
                     if normalized_publisher:
                         publisher_id = generate_normalized_id(normalized_publisher, "publisher")
-                        publisher_node = {
-                            'id': publisher_id,
-                            'label': normalized_publisher,
-                            'type': 'publisher'
-                        }
-                        if publisher_node not in nodes:
+                        if publisher_id not in node_ids_seen:
+                            publisher_node = {
+                                'id': publisher_id,
+                                'label': normalized_publisher,
+                                'type': 'publisher'
+                            }
                             nodes.append(publisher_node)
+                            node_ids_seen.add(publisher_id)
                     
-                    edge = {
-                        'from': publisher_id,
-                        'to': work['work_id'],
-                        'label': 'published',
-                        'type': 'published'
-                    }
-                    edges.append(edge)
+                    edge_id = f"{publisher_id}-published-{work['work_id']}"
+                    if edge_id not in edge_ids_seen:
+                        edge = {
+                            'from': publisher_id,
+                            'to': work['work_id'],
+                            'label': 'published',
+                            'type': 'published'
+                        }
+                        edges.append(edge)
+                        edge_ids_seen.add(edge_id)
         
         # Add related works if requested
         if include_related and main_works:
@@ -371,34 +383,7 @@ class Neo4jMangaRepository:
             # Add works by same author
             author_related = self.get_related_works_by_author(main_work_id, 5)
             for related in author_related:
-                related_node = {
-                    'id': related['work_id'],
-                    'label': related['title'],
-                    'type': 'work',
-                    'data': related
-                }
-                if related_node not in nodes:
-                    nodes.append(related_node)
-                
-                # Create author relationship edge
-                normalized_author = normalize_creator_name(related['author_name'])
-                author_id = generate_normalized_id(normalized_author, "author")
-                if any(n['id'] == author_id for n in nodes):
-                    edge = {
-                        'from': author_id,
-                        'to': related['work_id'],
-                        'label': 'created',
-                        'type': 'created'
-                    }
-                    if edge not in edges:
-                        edges.append(edge)
-            
-            # Add works from same magazine and period
-            magazine_period_related = self.get_related_works_by_magazine_and_period(main_work_id, 2, 10)
-            processed_work_ids = set(node['id'] for node in nodes if node['type'] == 'work')
-            
-            for related in magazine_period_related:
-                if related['work_id'] not in processed_work_ids:
+                if related['work_id'] not in node_ids_seen:
                     related_node = {
                         'id': related['work_id'],
                         'label': related['title'],
@@ -406,7 +391,36 @@ class Neo4jMangaRepository:
                         'data': related
                     }
                     nodes.append(related_node)
-                    processed_work_ids.add(related['work_id'])
+                    node_ids_seen.add(related['work_id'])
+                
+                # Create author relationship edge
+                normalized_author = normalize_creator_name(related['author_name'])
+                author_id = generate_normalized_id(normalized_author, "author")
+                if author_id in node_ids_seen:
+                    edge_id = f"{author_id}-created-{related['work_id']}"
+                    if edge_id not in edge_ids_seen:
+                        edge = {
+                            'from': author_id,
+                            'to': related['work_id'],
+                            'label': 'created',
+                            'type': 'created'
+                        }
+                        edges.append(edge)
+                        edge_ids_seen.add(edge_id)
+            
+            # Add works from same magazine and period
+            magazine_period_related = self.get_related_works_by_magazine_and_period(main_work_id, 2, 10)
+            
+            for related in magazine_period_related:
+                if related['work_id'] not in node_ids_seen:
+                    related_node = {
+                        'id': related['work_id'],
+                        'label': related['title'],
+                        'type': 'work',
+                        'data': related
+                    }
+                    nodes.append(related_node)
+                    node_ids_seen.add(related['work_id'])
                     
                     # Add creators
                     for creator in related['creators']:
@@ -421,17 +435,20 @@ class Neo4jMangaRepository:
                                         'label': normalized_creator,
                                         'type': 'author'
                                     }
-                                if not any(n['id'] == author_id for n in nodes):
+                                if author_id not in node_ids_seen:
                                     nodes.append(author_node)
+                                    node_ids_seen.add(author_id)
                                 
-                                edge = {
-                                    'from': author_id,
-                                    'to': related['work_id'],
-                                    'label': 'created',
-                                    'type': 'created'
-                                }
-                                if edge not in edges:
+                                edge_id = f"{author_id}-created-{related['work_id']}"
+                                if edge_id not in edge_ids_seen:
+                                    edge = {
+                                        'from': author_id,
+                                        'to': related['work_id'],
+                                        'label': 'created',
+                                        'type': 'created'
+                                    }
                                     edges.append(edge)
+                                    edge_ids_seen.add(edge_id)
                     
                     # Add publishers
                     # Handle single publisher from query result
@@ -444,33 +461,38 @@ class Neo4jMangaRepository:
                                 'label': normalized_publisher,
                                 'type': 'publisher'
                             }
-                        if not any(n['id'] == publisher_id for n in nodes):
+                        if publisher_id not in node_ids_seen:
                             nodes.append(publisher_node)
+                            node_ids_seen.add(publisher_id)
                         
-                        edge = {
-                            'from': publisher_id,
-                            'to': related['work_id'],
-                            'label': 'published',
-                            'type': 'published'
-                        }
-                        if edge not in edges:
+                        edge_id = f"{publisher_id}-published-{related['work_id']}"
+                        if edge_id not in edge_ids_seen:
+                            edge = {
+                                'from': publisher_id,
+                                'to': related['work_id'],
+                                'label': 'published',
+                                'type': 'published'
+                            }
                             edges.append(edge)
+                            edge_ids_seen.add(edge_id)
                 
                 # Create "same_publisher_period" edge between main work and related work
                 if related.get('publisher_name'):
-                    edge = {
-                        'from': main_work_id,
-                        'to': related['work_id'],
-                        'label': f"同じ出版社({related['publisher_name']})・同時期",
-                        'type': 'same_publisher_period'
-                    }
-                    if edge not in edges:
+                    edge_id = f"{main_work_id}-same_publisher_period-{related['work_id']}"
+                    if edge_id not in edge_ids_seen:
+                        edge = {
+                            'from': main_work_id,
+                            'to': related['work_id'],
+                            'label': f"同じ出版社({related['publisher_name']})・同時期",
+                            'type': 'same_publisher_period'
+                        }
                         edges.append(edge)
+                        edge_ids_seen.add(edge_id)
             
             # Add works from same publication period (without magazine constraint)
             period_related = self.get_related_works_by_publication_period(main_work_id, 3, 5)
             for related in period_related:
-                if related['work_id'] not in processed_work_ids:
+                if related['work_id'] not in node_ids_seen:
                     related_node = {
                         'id': related['work_id'],
                         'label': related['title'],
@@ -478,7 +500,7 @@ class Neo4jMangaRepository:
                         'data': related
                     }
                     nodes.append(related_node)
-                    processed_work_ids.add(related['work_id'])
+                    node_ids_seen.add(related['work_id'])
                     
                     # Add creators of period-related works
                     for creator in related['creators']:
@@ -493,22 +515,108 @@ class Neo4jMangaRepository:
                                         'label': normalized_creator,
                                         'type': 'author'
                                     }
-                                if not any(n['id'] == author_id for n in nodes):
+                                if author_id not in node_ids_seen:
                                     nodes.append(author_node)
+                                    node_ids_seen.add(author_id)
                                 
-                                edge = {
-                                    'from': author_id,
-                                    'to': related['work_id'],
-                                    'label': 'created',
-                                    'type': 'created'
-                                }
-                                if edge not in edges:
+                                edge_id = f"{author_id}-created-{related['work_id']}"
+                                if edge_id not in edge_ids_seen:
+                                    edge = {
+                                        'from': author_id,
+                                        'to': related['work_id'],
+                                        'label': 'created',
+                                        'type': 'created'
+                                    }
                                     edges.append(edge)
+                                    edge_ids_seen.add(edge_id)
         
-        logger.info(f"Returning {len(nodes)} nodes and {len(edges)} edges for search term: '{search_term}'")
+        # Final deduplication to ensure no duplicate nodes exist
+        unique_nodes = []
+        seen_work_titles = {}  # For work nodes, track by title to avoid duplicates
+        unique_node_ids = set()  # Track by ID
+        
+        for node in nodes:
+            if node['type'] == 'work':
+                # For work nodes, prioritize by keeping the one with more complete data
+                title = node['label']
+                if title in seen_work_titles:
+                    # Keep the node with more complete data (more properties)
+                    existing_node = seen_work_titles[title]
+                    existing_data_count = len(existing_node.get('data', {}))
+                    current_data_count = len(node.get('data', {}))
+                    
+                    if current_data_count > existing_data_count:
+                        # Replace with current node (has more data)
+                        unique_nodes = [n for n in unique_nodes if n['label'] != title or n['type'] != 'work']
+                        unique_nodes.append(node)
+                        seen_work_titles[title] = node
+                        unique_node_ids.add(node['id'])
+                    # Otherwise keep the existing one
+                else:
+                    seen_work_titles[title] = node
+                    unique_nodes.append(node)
+                    unique_node_ids.add(node['id'])
+            else:
+                # For non-work nodes, use ID-based deduplication
+                if node['id'] not in unique_node_ids:
+                    unique_nodes.append(node)
+                    unique_node_ids.add(node['id'])
+        
+        # Final deduplication for edges, ensuring they reference existing nodes
+        valid_node_ids = {node['id'] for node in unique_nodes}
+        work_title_to_id = {node['label']: node['id'] for node in unique_nodes if node['type'] == 'work'}
+        
+        unique_edges = []
+        unique_edge_keys = set()
+        
+        for edge in edges:
+            from_id = edge['from']
+            to_id = edge['to']
+            
+            # If this edge references a work node that was deduplicated, update the reference
+            # Check if the from/to IDs exist in our final node list
+            if from_id not in valid_node_ids:
+                # Try to find the correct node ID by matching with work titles
+                found_replacement = False
+                for node in unique_nodes:
+                    if node['type'] == 'work' and node['id'] != from_id:
+                        # Check if this might be the same work by looking at original edges
+                        original_from_node = next((n for n in nodes if n['id'] == from_id), None)
+                        if original_from_node and original_from_node['label'] == node['label']:
+                            from_id = node['id']
+                            found_replacement = True
+                            break
+                if not found_replacement:
+                    continue  # Skip this edge if we can't find a valid from node
+            
+            if to_id not in valid_node_ids:
+                # Try to find the correct node ID by matching with work titles
+                found_replacement = False
+                for node in unique_nodes:
+                    if node['type'] == 'work' and node['id'] != to_id:
+                        # Check if this might be the same work by looking at original edges
+                        original_to_node = next((n for n in nodes if n['id'] == to_id), None)
+                        if original_to_node and original_to_node['label'] == node['label']:
+                            to_id = node['id']
+                            found_replacement = True
+                            break
+                if not found_replacement:
+                    continue  # Skip this edge if we can't find a valid to node
+            
+            # Only add edge if both nodes exist
+            if from_id in valid_node_ids and to_id in valid_node_ids:
+                edge_key = (from_id, to_id, edge['type'])
+                if edge_key not in unique_edge_keys:
+                    updated_edge = edge.copy()
+                    updated_edge['from'] = from_id
+                    updated_edge['to'] = to_id
+                    unique_edges.append(updated_edge)
+                    unique_edge_keys.add(edge_key)
+        
+        logger.info(f"After deduplication: {len(unique_nodes)} nodes and {len(unique_edges)} edges for search term: '{search_term}'")
         return {
-            'nodes': nodes,
-            'edges': edges
+            'nodes': unique_nodes,
+            'edges': unique_edges
         }
     
     def get_database_statistics(self) -> Dict[str, int]:

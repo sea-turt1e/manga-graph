@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
+import base64
 
 
 class NodeData(BaseModel):
@@ -53,3 +54,40 @@ class MagazineResponse(BaseModel):
     name: str
     publisher: str
     established_date: Optional[str] = None
+
+
+class ImageFetchRequest(BaseModel):
+    work_id: str
+    cover_url: str
+
+
+class ImageFetchResponse(BaseModel):
+    work_id: str
+    image_data: str  # Base64 encoded image data
+    content_type: str
+    file_size: int
+    success: bool
+    error: Optional[str] = None
+
+    @classmethod
+    def from_bytes(cls, work_id: str, image_data: bytes, content_type: str, success: bool, error: Optional[str] = None):
+        """Create response from bytes data"""
+        return cls(
+            work_id=work_id,
+            image_data=base64.b64encode(image_data).decode('utf-8') if image_data else '',
+            content_type=content_type or '',
+            file_size=len(image_data) if image_data else 0,
+            success=success,
+            error=error
+        )
+
+
+class BulkImageFetchRequest(BaseModel):
+    requests: List[ImageFetchRequest]
+
+
+class BulkImageFetchResponse(BaseModel):
+    results: List[ImageFetchResponse]
+    total_processed: int
+    success_count: int
+    error_count: int

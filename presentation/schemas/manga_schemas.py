@@ -91,3 +91,22 @@ class BulkImageFetchResponse(BaseModel):
     total_processed: int
     success_count: int
     error_count: int
+
+
+class CoverResponse(BaseModel):
+    work_id: str
+    cover_url: Optional[str] = None
+    source: str  # 'database', 'api', 'placeholder'
+    has_real_cover: bool
+    error: Optional[str] = None
+
+
+class BulkCoverRequest(BaseModel):
+    work_ids: List[str]
+
+
+class BulkCoverResponse(BaseModel):
+    results: List[CoverResponse]
+    total_processed: int
+    success_count: int
+    error_count: int

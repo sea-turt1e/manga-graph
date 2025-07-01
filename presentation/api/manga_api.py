@@ -11,8 +11,11 @@ from domain.use_cases import SearchMangaUseCase
 from infrastructure.database import Neo4jMangaRepository
 from presentation.schemas import (
     AuthorResponse,
+    BulkCoverRequest,
+    BulkCoverResponse,
     BulkImageFetchRequest,
     BulkImageFetchResponse,
+    CoverResponse,
     EdgeData,
     GraphResponse,
     ImageFetchRequest,
@@ -412,6 +415,84 @@ async def get_work_cover(
 
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@cover_router.post("/bulk", response_model=BulkCoverResponse)
+async def get_bulk_covers(
+    request: BulkCoverRequest,
+    cover_service=Depends(get_cover_image_service),
+    neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
+):
+    """複数作品の書影URLを一括取得"""
+    try:
+        results = []
+        success_count = 0
+        error_count = 0
+
+        for work_id in request.work_ids:
+            try:
+                # Get work details from Neo4j
+                work_data = neo4j_service.get_work_by_id(work_id)
+                if not work_data:
+                    results.append(CoverResponse(
+                        work_id=work_id,
+                        cover_url=None,
+                        source="error",
+                        has_real_cover=False,
+                        error="Work not found"
+                    ))
+                    error_count += 1
+                    continue
+
+                # Try to get cover using existing cover_image_url first
+                if work_data.get("cover_image_url"):
+                    if cover_service.validate_cover_url(work_data["cover_image_url"]):
+                        results.append(CoverResponse(
+                            work_id=work_id,
+                            cover_url=work_data["cover_image_url"],
+                            source="database",
+                            has_real_cover=True
+                        ))
+                        success_count += 1
+                        continue
+
+                # Try to get cover using ISBN
+                isbn = work_data.get("isbn")
+                title = work_data.get("title")
+                genre = work_data.get("genre")
+                publisher = work_data.get("publisher")
+
+                cover_result = cover_service.get_cover_with_fallback(
+                    isbn=isbn, title=title, genre=genre, publisher=publisher
+                )
+
+                results.append(CoverResponse(
+                    work_id=work_id,
+                    cover_url=cover_result.get("cover_url"),
+                    source=cover_result.get("source", "unknown"),
+                    has_real_cover=cover_result.get("has_real_cover", False)
+                ))
+                success_count += 1
+
+            except Exception as e:
+                results.append(CoverResponse(
+                    work_id=work_id,
+                    cover_url=None,
+                    source="error",
+                    has_real_cover=False,
+                    error=str(e)
+                ))
+                error_count += 1
+
+        return BulkCoverResponse(
+            results=results,
+            total_processed=len(request.work_ids),
+            success_count=success_count,
+            error_count=error_count
+        )
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

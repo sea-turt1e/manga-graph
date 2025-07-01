@@ -5,8 +5,8 @@ Neo4j-based media arts service for faster graph data retrieval
 import logging
 from typing import Any, Dict, List, Optional
 
-from infrastructure.external.neo4j_repository import Neo4jMangaRepository
 from domain.services.mock_neo4j_service import MockNeo4jService
+from infrastructure.external.neo4j_repository import Neo4jMangaRepository
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +16,10 @@ class Neo4jMediaArtsService:
 
     def __init__(self, neo4j_repository: Optional[Neo4jMangaRepository] = None):
         import os
-        
+
         # Force mock mode if USE_MOCK_NEO4J is set or Neo4j connection fails
         use_mock_env = os.getenv("USE_MOCK_NEO4J", "false").lower() == "true"
-        
+
         if use_mock_env:
             logger.info("USE_MOCK_NEO4J is set, using mock service")
             self.neo4j_repository = MockNeo4jService()
@@ -30,7 +30,7 @@ class Neo4jMediaArtsService:
                 self.use_mock = False
                 # Test connection by getting stats
                 stats = self.neo4j_repository.get_database_statistics()
-                if not stats or stats.get('work_count', 0) == 0:
+                if not stats or stats.get("work_count", 0) == 0:
                     logger.warning("Neo4j database appears to be empty, switching to mock service")
                     self.neo4j_repository = MockNeo4jService()
                     self.use_mock = True
@@ -78,7 +78,7 @@ class Neo4jMediaArtsService:
         if not self.neo4j_repository:
             logger.warning("Neo4j repository is not available")
             return {"nodes": [], "edges": []}
-            
+
         try:
             result = self.neo4j_repository.search_manga_data_with_related(search_term, limit, include_related)
 
@@ -164,7 +164,7 @@ class Neo4jMediaArtsService:
         except Exception as e:
             logger.error(f"Error getting database statistics: {e}")
             return {}
-    
+
     def get_work_by_id(self, work_id: str) -> Optional[Dict[str, Any]]:
         """Get work details by ID"""
         try:
@@ -172,7 +172,7 @@ class Neo4jMediaArtsService:
         except Exception as e:
             logger.error(f"Error getting work by ID {work_id}: {e}")
             return None
-    
+
     def update_work_cover_image(self, work_id: str, cover_url: str) -> bool:
         """Update work cover image URL"""
         try:
@@ -180,7 +180,7 @@ class Neo4jMediaArtsService:
         except Exception as e:
             logger.error(f"Error updating cover image for work {work_id}: {e}")
             return False
-    
+
     def get_works_needing_covers(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get works that have ISBN but no cover image"""
         try:

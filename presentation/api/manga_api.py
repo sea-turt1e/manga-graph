@@ -5,13 +5,21 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from domain.services import MediaArtsDataService
 from domain.services.cover_cache_service import get_cache_service
 from domain.services.cover_image_service import get_cover_service
+from domain.services.image_fetch_service import get_image_fetch_service, ImageFetchService
 from domain.services.neo4j_media_arts_service import Neo4jMediaArtsService
 from domain.use_cases import SearchMangaUseCase
 from infrastructure.database import Neo4jMangaRepository
 from presentation.schemas import (
     AuthorResponse,
+    BulkCoverRequest,
+    BulkCoverResponse,
+    BulkImageFetchRequest,
+    BulkImageFetchResponse,
+    CoverResponse,
     EdgeData,
     GraphResponse,
+    ImageFetchRequest,
+    ImageFetchResponse,
     MagazineResponse,
     NodeData,
     SearchRequest,
@@ -56,6 +64,11 @@ def get_cover_image_service():
 def get_cover_cache_service():
     """Dependency to get cover cache service"""
     return get_cache_service()
+
+
+def get_image_fetch_service_dep():
+    """Dependency to get image fetch service"""
+    return get_image_fetch_service()
 
 
 @router.post("/search", response_model=GraphResponse)
@@ -363,6 +376,9 @@ async def get_neo4j_stats(
 # Cover Image Endpoints
 cover_router = APIRouter(prefix="/api/v1/covers", tags=["cover-images"])
 
+# Image Fetch Endpoints
+image_router = APIRouter(prefix="/api/v1/images", tags=["image-fetch"])
+
 
 @cover_router.get("/work/{work_id:path}")
 async def get_work_cover(
@@ -399,6 +415,84 @@ async def get_work_cover(
 
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@cover_router.post("/bulk", response_model=BulkCoverResponse)
+async def get_bulk_covers(
+    request: BulkCoverRequest,
+    cover_service=Depends(get_cover_image_service),
+    neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
+):
+    """複数作品の書影URLを一括取得"""
+    try:
+        results = []
+        success_count = 0
+        error_count = 0
+
+        for work_id in request.work_ids:
+            try:
+                # Get work details from Neo4j
+                work_data = neo4j_service.get_work_by_id(work_id)
+                if not work_data:
+                    results.append(CoverResponse(
+                        work_id=work_id,
+                        cover_url=None,
+                        source="error",
+                        has_real_cover=False,
+                        error="Work not found"
+                    ))
+                    error_count += 1
+                    continue
+
+                # Try to get cover using existing cover_image_url first
+                if work_data.get("cover_image_url"):
+                    if cover_service.validate_cover_url(work_data["cover_image_url"]):
+                        results.append(CoverResponse(
+                            work_id=work_id,
+                            cover_url=work_data["cover_image_url"],
+                            source="database",
+                            has_real_cover=True
+                        ))
+                        success_count += 1
+                        continue
+
+                # Try to get cover using ISBN
+                isbn = work_data.get("isbn")
+                title = work_data.get("title")
+                genre = work_data.get("genre")
+                publisher = work_data.get("publisher")
+
+                cover_result = cover_service.get_cover_with_fallback(
+                    isbn=isbn, title=title, genre=genre, publisher=publisher
+                )
+
+                results.append(CoverResponse(
+                    work_id=work_id,
+                    cover_url=cover_result.get("cover_url"),
+                    source=cover_result.get("source", "unknown"),
+                    has_real_cover=cover_result.get("has_real_cover", False)
+                ))
+                success_count += 1
+
+            except Exception as e:
+                results.append(CoverResponse(
+                    work_id=work_id,
+                    cover_url=None,
+                    source="error",
+                    has_real_cover=False,
+                    error=str(e)
+                ))
+                error_count += 1
+
+        return BulkCoverResponse(
+            results=results,
+            total_processed=len(request.work_ids),
+            success_count=success_count,
+            error_count=error_count
+        )
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -552,5 +646,70 @@ async def invalidate_cache_entry(
     try:
         cache_service.invalidate_cache(isbn, title)
         return {"status": "cache_invalidated", "isbn": isbn, "title": title}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Image Fetch API Endpoints
+@image_router.post("/fetch", response_model=ImageFetchResponse)
+async def fetch_single_image(
+    request: ImageFetchRequest,
+    image_service: ImageFetchService = Depends(get_image_fetch_service_dep),
+):
+    """Fetch a single image from URL"""
+    try:
+        async with image_service:
+            result = await image_service.fetch_single_image(request.work_id, request.cover_url)
+            
+            return ImageFetchResponse.from_bytes(
+                work_id=result['work_id'],
+                image_data=result['image_data'],
+                content_type=result['content_type'],
+                success=result['success'],
+                error=result['error']
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@image_router.post("/fetch-bulk", response_model=BulkImageFetchResponse)
+async def fetch_bulk_images(
+    request: BulkImageFetchRequest,
+    image_service: ImageFetchService = Depends(get_image_fetch_service_dep),
+):
+    """Fetch multiple images concurrently from URLs"""
+    try:
+        # Convert requests to format expected by service
+        fetch_requests = [
+            {"work_id": req.work_id, "cover_url": req.cover_url}
+            for req in request.requests
+        ]
+        
+        async with image_service:
+            results = await image_service.fetch_images(fetch_requests)
+            
+            # Convert results to response format
+            response_results = []
+            success_count = 0
+            
+            for result in results:
+                image_response = ImageFetchResponse.from_bytes(
+                    work_id=result['work_id'],
+                    image_data=result['image_data'],
+                    content_type=result['content_type'],
+                    success=result['success'],
+                    error=result['error']
+                )
+                response_results.append(image_response)
+                
+                if result['success']:
+                    success_count += 1
+            
+            return BulkImageFetchResponse(
+                results=response_results,
+                total_processed=len(results),
+                success_count=success_count,
+                error_count=len(results) - success_count
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

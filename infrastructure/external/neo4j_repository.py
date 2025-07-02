@@ -156,11 +156,19 @@ class Neo4jMangaRepository:
             # Convert groups to single works representing the series
             consolidated_works = []
             for group_data in series_groups.values():
-                # 複数の作品がある場合は最初の巻（最も古い出版日）のみを返す
+                # 複数の作品がある場合は巻番号1を優先し、なければ2、3...の順番で選択
                 if len(group_data['works']) > 1:
-                    # 出版日でソートして最初の作品を選択
-                    sorted_works = sorted(group_data['works'], 
-                                        key=lambda x: x['published_date'] if x['published_date'] else '9999-99-99')
+                    # 巻番号でソートして最初の作品を選択（巻番号がない場合は最後に）
+                    def volume_sort_key(work):
+                        volume = work.get('volume')
+                        if volume is None:
+                            return float('inf')  # 巻番号がない場合は最後
+                        try:
+                            return int(volume)
+                        except (ValueError, TypeError):
+                            return float('inf')  # 数値でない場合も最後
+                    
+                    sorted_works = sorted(group_data['works'], key=volume_sort_key)
                     first_work = sorted_works[0]
                     
                     # タイトルから巻数表記を除去

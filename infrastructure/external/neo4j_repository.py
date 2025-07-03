@@ -194,20 +194,36 @@ class Neo4jMangaRepository:
                         return (1, published_date)  # 巻数がない場合は優先度1
 
                     sorted_works = sorted(group_data["works"], key=sort_key)
-                    first_work = sorted_works[0]
-
+                    
+                    # 第1巻を探す（なければ最初の巻を使用）
+                    first_volume_work = None
+                    for work in sorted_works:
+                        volume = work.get("volume", "")
+                        if volume and str(volume).strip():
+                            import re
+                            volume_match = re.search(r"(\d+)", str(volume))
+                            if volume_match and int(volume_match.group(1)) == 1:
+                                first_volume_work = work
+                                logger.debug(f"Found volume 1 for series: {work['title']} (ID: {work['work_id']})")
+                                break
+                    
+                    # 第1巻が見つからない場合は、ソート済みリストの最初を使用
+                    if not first_volume_work:
+                        first_volume_work = sorted_works[0]
+                        logger.debug(f"Volume 1 not found, using first sorted work: {first_volume_work['title']} (ID: {first_volume_work['work_id']}, volume: {first_volume_work.get('volume', 'N/A')})")
+                    
                     # タイトルから巻数表記を除去
-                    base_title = self._extract_base_title(first_work["title"])
+                    base_title = self._extract_base_title(first_volume_work["title"])
 
                     series_work = {
-                        "work_id": first_work["work_id"],
+                        "work_id": first_volume_work["work_id"],  # 第1巻のIDを使用
                         "title": base_title,  # 巻数を除去したタイトル
-                        "published_date": first_work["published_date"],
-                        "creators": first_work["creators"],
-                        "publishers": first_work["publishers"],
-                        "genre": first_work["genre"],
-                        "isbn": first_work["isbn"],
-                        "volume": first_work["volume"],
+                        "published_date": first_volume_work["published_date"],
+                        "creators": list(group_data["creators"]),  # シリーズ全体のクリエイター
+                        "publishers": list(group_data["publishers"]),  # シリーズ全体の出版社
+                        "genre": first_volume_work["genre"],
+                        "isbn": first_volume_work["isbn"],
+                        "volume": "1",  # シリーズは常に第1巻として表示
                         "is_series": True,
                         "work_count": len(group_data["works"]),
                         "series_volumes": f"{len(group_data['works'])}巻",  # シリーズ全体の巻数情報
@@ -244,6 +260,11 @@ class Neo4jMangaRepository:
             r"\s*VOLUME\s*\d+$",  # VOLUME X
             r"\s*巻\d+$",  # 巻X
             r"\s*その\d+$",  # そのX
+            r"\s*メガ盛り.*$",  # メガ盛りmenu等の特殊版
+            r"\s*完全版.*$",  # 完全版
+            r"\s*新装版.*$",  # 新装版
+            r"\s*愛蔵版.*$",  # 愛蔵版
+            r"\s*文庫版.*$",  # 文庫版
         ]
 
         base = title
@@ -310,7 +331,7 @@ class Neo4jMangaRepository:
     ) -> List[Dict[str, Any]]:
         """Get works published by the same publisher in the same period"""
         with self.driver.session() as session:
-            # Since we don't have Magazine nodes, we'll use Publisher relationships
+            # まずシリーズごとにグループ化された作品を取得
             query = """
             MATCH (w1:Work {id: $work_id})<-[:PUBLISHED]-(p:Publisher)
             WHERE w1.published_date IS NOT NULL AND w1.published_date <> ''
@@ -321,16 +342,85 @@ class Neo4jMangaRepository:
             WITH w1, w2, p, year1, toInteger(substring(w2.published_date, 0, 4)) as year2
             WHERE abs(year1 - year2) <= $year_range
             OPTIONAL MATCH (a:Author)-[:CREATED]->(w2)
+            OPTIONAL MATCH (s:Series)-[:CONTAINS]->(w2)
             RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
                    collect(DISTINCT a.name) as creators,
                    p.name as publisher_name,
-                   abs(year1 - year2) as year_diff
+                   abs(year1 - year2) as year_diff,
+                   w2.volume as volume,
+                   s.id as series_id,
+                   s.name as series_name
             ORDER BY year_diff ASC, w2.published_date ASC
-            LIMIT $limit
             """
 
-            result = session.run(query, work_id=work_id, year_range=year_range, limit=limit)
-            return [dict(record) for record in result]
+            result = session.run(query, work_id=work_id, year_range=year_range, limit=limit * 3)  # 多めに取得してグループ化
+            all_works = [dict(record) for record in result]
+            
+            # シリーズ作品をグループ化
+            series_groups = {}
+            standalone_works = []
+            
+            for work in all_works:
+                base_title = self._extract_base_title(work["title"])
+                
+                # シリーズIDがある場合
+                if work["series_id"]:
+                    series_key = work["series_id"]
+                    if series_key not in series_groups:
+                        series_groups[series_key] = []
+                    series_groups[series_key].append(work)
+                else:
+                    # シリーズIDがない場合、タイトルでグループ化を試みる
+                    found_group = False
+                    for key, group in series_groups.items():
+                        if group and base_title == self._extract_base_title(group[0]["title"]):
+                            series_groups[key].append(work)
+                            found_group = True
+                            break
+                    
+                    if not found_group:
+                        # 既存のグループに属さない場合は新しいグループを作るか、単独作品とする
+                        # 同じベースタイトルの作品が複数ある可能性をチェック
+                        similar_works = [w for w in all_works if self._extract_base_title(w["title"]) == base_title]
+                        if len(similar_works) > 1:
+                            series_key = f"series_{abs(hash(base_title))}"
+                            series_groups[series_key] = [work]
+                        else:
+                            standalone_works.append(work)
+            
+            # 各シリーズから第1巻を選択
+            consolidated_works = []
+            for series_works in series_groups.values():
+                if len(series_works) > 1:
+                    # 第1巻を探す
+                    first_volume = None
+                    for work in series_works:
+                        volume = work.get("volume", "")
+                        if volume and str(volume).strip():
+                            import re
+                            volume_match = re.search(r"(\d+)", str(volume))
+                            if volume_match and int(volume_match.group(1)) == 1:
+                                first_volume = work
+                                logger.debug(f"Found volume 1 for related series: {work['title']} (ID: {work['work_id']})")
+                                break
+                    
+                    # 第1巻が見つからない場合は出版日が最も古いものを選択
+                    if not first_volume:
+                        sorted_works = sorted(series_works, key=lambda x: x.get("published_date", "9999"))
+                        first_volume = sorted_works[0]
+                        logger.debug(f"Volume 1 not found for related series, using earliest: {first_volume['title']} (ID: {first_volume['work_id']})")
+                    
+                    consolidated_works.append(first_volume)
+                else:
+                    consolidated_works.append(series_works[0])
+            
+            # 単独作品を追加
+            consolidated_works.extend(standalone_works)
+            
+            # year_diffでソートして制限
+            consolidated_works.sort(key=lambda x: (x["year_diff"], x.get("published_date", "")))
+            
+            return consolidated_works[:limit]
 
     def search_manga_data_with_related(
         self, search_term: str, limit: int = 20, include_related: bool = True

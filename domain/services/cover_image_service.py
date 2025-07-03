@@ -44,12 +44,13 @@ class CoverImageService:
             logger.debug(f"Using cached cover for ISBN {isbn}")
             return cached_url
 
-        # Try Google Books API first (most reliable for covers)
-        cover_url = self._get_cover_from_google_books(isbn, title)
-        if cover_url:
-            # Cache the successful result
-            self.cache_service.cache_cover(isbn, cover_url, title)
-            return cover_url
+        # Because Cover from Google Books API could be illegal, we will not use it for now.
+        # # Try Google Books API first (most reliable for covers)
+        # cover_url = self._get_cover_from_google_books(isbn, title)
+        # if cover_url:
+        #     # Cache the successful result
+        #     self.cache_service.cache_cover(isbn, cover_url, title)
+        #     return cover_url
 
         # Try openBD as fallback
         cover_url = self._get_cover_from_openbd(isbn)

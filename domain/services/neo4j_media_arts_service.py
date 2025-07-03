@@ -212,20 +212,26 @@ class Neo4jMediaArtsService:
 
             # Add work-specific properties
             if node["type"] == "work":
+                is_series = node_data.get("is_series", False)
+                volume = node_data.get("volume", "")
+                
+                # Log for debugging
+                logger.debug(f"Converting work node: {node['label']}, is_series: {is_series}, original volume: {volume}")
+                
                 properties.update(
                     {
                         "title": node_data.get("title", node["label"]),
                         "published_date": node_data.get("published_date", ""),
                         "genre": node_data.get("genre", ""),
                         "isbn": node_data.get("isbn", ""),
-                        "volume": node_data.get("volume", ""),
-                        "is_series": node_data.get("is_series", False),
+                        "volume": "1" if is_series else volume,  # Series always show volume 1
+                        "is_series": is_series,
                         "work_count": node_data.get("work_count", 1),
                     }
                 )
 
-                # For series, include volume information
-                if node_data.get("is_series"):
+                # For series, include additional series information
+                if is_series:
                     properties["series_volumes"] = node_data.get("series_volumes", node_data.get("volume", ""))
                     properties["date_range"] = node_data.get("published_date", "")
 

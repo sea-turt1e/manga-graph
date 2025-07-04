@@ -6,7 +6,7 @@ import base64
 class NodeData(BaseModel):
     id: str
     label: str
-    type: str  # 'work', 'author', 'magazine', etc.
+    type: str  # 'work', 'author', 'magazine', 'publication', etc.
     properties: Dict[str, Any]
 
 

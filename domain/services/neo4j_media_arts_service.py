@@ -204,8 +204,8 @@ class Neo4jMediaArtsService:
 
         # Convert nodes
         for node in neo4j_result.get("nodes", []):
-            # Extract properties from data field if it exists
-            node_data = node.get("data", {})
+            # Extract properties from data or properties field
+            node_data = node.get("properties", node.get("data", {}))
 
             # Build properties object
             properties = {"source": "neo4j"}
@@ -245,6 +245,16 @@ class Neo4jMediaArtsService:
                 properties["name"] = node["label"]
             elif node["type"] == "publisher":
                 properties["name"] = node["label"]
+            elif node["type"] == "magazine":
+                properties["name"] = node["label"]
+            elif node["type"] == "publication":
+                properties.update({
+                    "title": node_data.get("title", node["label"]),
+                    "publication_date": node_data.get("publication_date", ""),
+                    "genre": node_data.get("genre", ""),
+                    "creators": node_data.get("creators", []),
+                    "magazines": node_data.get("magazines", [])
+                })
 
             converted_node = {"id": node["id"], "label": node["label"], "type": node["type"], "properties": properties}
 
@@ -252,12 +262,17 @@ class Neo4jMediaArtsService:
 
         # Convert edges
         for edge in neo4j_result.get("edges", []):
+            # Handle both old and new edge formats
+            source = edge.get("source", edge.get("from"))
+            target = edge.get("target", edge.get("to"))
+            edge_id = edge.get("id", f"{source}-{edge['type']}-{target}")
+            
             converted_edge = {
-                "id": f"{edge['from']}-{edge['type']}-{edge['to']}",
-                "source": edge["from"],
-                "target": edge["to"],
+                "id": edge_id,
+                "source": source,
+                "target": target,
                 "type": edge["type"],
-                "properties": {"source": "neo4j"},
+                "properties": edge.get("properties", {"source": "neo4j"}),
             }
             edges.append(converted_edge)
 

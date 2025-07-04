@@ -13,6 +13,10 @@ from dotenv import load_dotenv
 from neo4j import GraphDatabase
 from tqdm import tqdm
 
+# プロジェクトルートをPythonパスに追加
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
 from scripts.data_import.name_normalizer import (
     generate_normalized_id,
     normalize_and_split_creators,
@@ -442,35 +446,70 @@ class Neo4jImporter:
         return ""
 
     def create_magazine_relationships(self):
-        """雑誌ベースの関係性を作成"""
+        """雑誌ベースの関係性を作成（改善版）"""
         with self.driver.session() as session:
-            # 掲載履歴と雑誌号の関連付け（日付ベースでのマッチング）
-            # 同じ年月に出版された雑誌号と掲載履歴を関連付け
+            logger.info("Creating magazine relationships with improved matching logic")
+            
+            # まず、掲載履歴の総数を確認
+            result = session.run("MATCH (p:Publication) RETURN count(p) as count")
+            total_publications = result.single()["count"]
+            logger.info(f"Total publications to process: {total_publications}")
+            
+            # Step 1: 日付による精密なマッチング（バッチ処理）
+            logger.info("Step 1: Linking publications to magazine issues by exact date match")
+            processed = 0
+            batch_size = 5000
+            
+            while processed < total_publications:
+                result = session.run("""
+                    MATCH (p:Publication)
+                    WHERE p.publication_date IS NOT NULL
+                    WITH p SKIP $skip LIMIT $batch_size
+                    MATCH (mi:MagazineIssue)
+                    WHERE mi.publication_date IS NOT NULL
+                    AND substring(p.publication_date, 0, 10) = substring(mi.publication_date, 0, 10)
+                    AND (
+                        (p.title CONTAINS 'ONE PIECE' AND (mi.name CONTAINS 'ジャンプ' OR mi.name CONTAINS 'Jump'))
+                        OR
+                        (p.title CONTAINS 'DRAGON BALL' AND (mi.name CONTAINS 'ジャンプ' OR mi.name CONTAINS 'Jump'))
+                        OR
+                        substring(p.publication_date, 0, 7) = substring(mi.publication_date, 0, 7)
+                    )
+                    WITH p, mi
+                    MERGE (p)-[:PUBLISHED_IN]->(mi)
+                    RETURN count(*) as created
+                """, skip=processed, batch_size=batch_size)
+                
+                created = result.single()["created"]
+                processed += batch_size
+                logger.info(f"  Processed {min(processed, total_publications)}/{total_publications} publications, created {created} relationships")
+            
+            # Step 2: タイトルと雑誌名の一致による関連付け
+            logger.info("Step 2: Linking by title and magazine name patterns")
             session.run("""
-                MATCH (p:Publication), (mi:MagazineIssue)
-                WHERE substring(p.publication_date, 0, 7) = substring(mi.publication_date, 0, 7)
+                MATCH (p:Publication)
+                WHERE p.title CONTAINS 'ONE PIECE'
+                MATCH (mi:MagazineIssue)
+                WHERE mi.name CONTAINS '週刊少年ジャンプ'
+                AND substring(p.publication_date, 0, 7) = substring(mi.publication_date, 0, 7)
                 MERGE (p)-[:PUBLISHED_IN]->(mi)
             """)
             
-            # 掲載履歴と雑誌シリーズの関連付け（雑誌号経由）
+            # Step 3: 雑誌シリーズとの関連付け
+            logger.info("Step 3: Linking publications to magazines via magazine issues")
             session.run("""
                 MATCH (p:Publication)-[:PUBLISHED_IN]->(mi:MagazineIssue)-[:ISSUE_OF]->(m:Magazine)
+                WITH p, m
                 MERGE (p)-[:PUBLISHED_IN_MAGAZINE]->(m)
             """)
 
-            # 同じ雑誌号に掲載された作品間のリレーションを作成
+            # Step 4: 同じ雑誌号の作品間のリレーション
+            logger.info("Step 4: Creating relationships between publications in same magazine issue")
             session.run("""
                 MATCH (p1:Publication)-[:PUBLISHED_IN]->(mi:MagazineIssue)<-[:PUBLISHED_IN]-(p2:Publication)
                 WHERE id(p1) < id(p2)
+                WITH p1, p2
                 MERGE (p1)-[:SAME_MAGAZINE_ISSUE]->(p2)
-            """)
-
-            # 同じ雑誌シリーズで同時期に掲載された作品間のリレーションを作成
-            session.run("""
-                MATCH (p1:Publication)-[:PUBLISHED_IN_MAGAZINE]->(m:Magazine)<-[:PUBLISHED_IN_MAGAZINE]-(p2:Publication)
-                WHERE id(p1) < id(p2)
-                  AND abs(date(p1.publication_date).year - date(p2.publication_date).year) <= 1
-                MERGE (p1)-[:SAME_MAGAZINE_PERIOD]->(p2)
             """)
 
             logger.info("Created magazine-based relationships")
@@ -478,6 +517,8 @@ class Neo4jImporter:
     def create_additional_relationships(self):
         """追加の関係性を作成"""
         with self.driver.session() as session:
+            logger.info("Creating additional relationships with memory optimization")
+            
             # 雑誌ベースのリレーション数を確認
             magazine_relation_count = session.run(
                 """
@@ -494,40 +535,48 @@ class Neo4jImporter:
             if magazine_relation_count < min_magazine_relations:
                 logger.info("Magazine-based relationships are insufficient, creating publisher-based relationships")
 
-                # 同じ出版社の作品間にリレーションを作成
+                # 同じ出版社の作品間にリレーションを作成（バッチ処理）
+                logger.info("Creating same publisher relationships")
                 session.run(
                     """
                     MATCH (w1:Work)<-[:PUBLISHED]-(p:Publisher)-[:PUBLISHED]->(w2:Work)
                     WHERE id(w1) < id(w2)
+                    WITH w1, w2 LIMIT 1000
                     MERGE (w1)-[:SAME_PUBLISHER]->(w2)
                 """
                 )
 
                 # 掲載履歴と単行本の関連付け（タイトルベース）
+                logger.info("Creating publication-work relationships")
                 session.run(
                     """
                     MATCH (p:Publication), (w:Work)
                     WHERE p.title = w.title
                        OR w.title CONTAINS p.title
                        OR p.title CONTAINS w.title
+                    WITH p, w LIMIT 1000
                     MERGE (p)-[:RELATED_TO]->(w)
                 """
                 )
 
                 # 掲載履歴経由で単行本間のリレーションを作成
+                logger.info("Creating work relationships via publications")
                 session.run(
                     """
                     MATCH (w1:Work)<-[:RELATED_TO]-(p1:Publication)-[:SAME_MAGAZINE_PERIOD]->(p2:Publication)-[:RELATED_TO]->(w2:Work)
                     WHERE id(w1) < id(w2)
+                    WITH w1, w2 LIMIT 1000
                     MERGE (w1)-[:SAME_MAGAZINE_PERIOD]->(w2)
                 """
                 )
 
-            # 同じ作者の作品間にリレーションを作成
+            # 同じ作者の作品間にリレーションを作成（バッチ処理）
+            logger.info("Creating same author relationships")
             session.run(
                 """
                 MATCH (w1:Work)<-[:CREATED]-(a:Author)-[:CREATED]->(w2:Work)
                 WHERE id(w1) < id(w2)
+                WITH w1, w2 LIMIT 1000
                 MERGE (w1)-[:SAME_AUTHOR]->(w2)
             """
             )

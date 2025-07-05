@@ -180,17 +180,17 @@ class Neo4jImporter:
         for i in tqdm(range(0, len(items), batch_size), desc="Importing manga magazines"):
             batch = items[i : i + batch_size]
             self._import_magazine_batch(batch)
-    
+
     def import_magazine_issues(self, filepath: Path, batch_size: int = 1000):
         """マンガ雑誌各号データをインポート (metadata102)"""
         logger.info(f"Importing magazine issues from {filepath}")
-        
+
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
-        
+
         items = data.get("@graph", [])
         logger.info(f"Found {len(items)} magazine issue items")
-        
+
         # バッチ処理でインポート
         for i in tqdm(range(0, len(items), batch_size), desc="Importing magazine issues"):
             batch = items[i : i + batch_size]
@@ -320,7 +320,7 @@ class Neo4jImporter:
 
                 except Exception as e:
                     logger.error(f"Error importing magazine {item.get('@id', 'unknown')}: {e}")
-    
+
     def _import_magazine_issue_batch(self, items: List[Dict]):
         """マンガ雑誌各号のバッチをインポート (metadata102)"""
         with self.driver.session() as session:
@@ -328,10 +328,10 @@ class Neo4jImporter:
                 try:
                     issue_id = item.get("@id", "")
                     issue_name = self._extract_value(item.get("schema:name", ""))
-                    
+
                     if not issue_name:
                         continue
-                    
+
                     issue_props = {
                         "id": issue_id,
                         "name": issue_name,
@@ -343,19 +343,23 @@ class Neo4jImporter:
                         "genre": item.get("schema:genre", ""),
                         "source": "media_arts_db",
                     }
-                    
+
                     # 雑誌号ノードを作成
                     session.run("MERGE (mi:MagazineIssue {id: $id}) SET mi += $props", id=issue_id, props=issue_props)
-                    
+
                     # 雑誌シリーズとの関連を作成
                     parent_magazine_id = item.get("schema:isPartOf", {}).get("@id", "")
                     if parent_magazine_id:
-                        session.run("""
+                        session.run(
+                            """
                             MATCH (mi:MagazineIssue {id: $issue_id})
                             MATCH (m:Magazine {id: $magazine_id})
                             MERGE (mi)-[:ISSUE_OF]->(m)
-                        """, issue_id=issue_id, magazine_id=parent_magazine_id)
-                    
+                        """,
+                            issue_id=issue_id,
+                            magazine_id=parent_magazine_id,
+                        )
+
                 except Exception as e:
                     logger.error(f"Error importing magazine issue {item.get('@id', 'unknown')}: {e}")
 
@@ -449,19 +453,20 @@ class Neo4jImporter:
         """雑誌ベースの関係性を作成（改善版）"""
         with self.driver.session() as session:
             logger.info("Creating magazine relationships with improved matching logic")
-            
+
             # まず、掲載履歴の総数を確認
             result = session.run("MATCH (p:Publication) RETURN count(p) as count")
             total_publications = result.single()["count"]
             logger.info(f"Total publications to process: {total_publications}")
-            
+
             # Step 1: 日付による精密なマッチング（バッチ処理）
             logger.info("Step 1: Linking publications to magazine issues by exact date match")
             processed = 0
-            batch_size = 5000
-            
+            batch_size = 1000
+
             while processed < total_publications:
-                result = session.run("""
+                result = session.run(
+                    """
                     MATCH (p:Publication)
                     WHERE p.publication_date IS NOT NULL
                     WITH p SKIP $skip LIMIT $batch_size
@@ -478,39 +483,50 @@ class Neo4jImporter:
                     WITH p, mi
                     MERGE (p)-[:PUBLISHED_IN]->(mi)
                     RETURN count(*) as created
-                """, skip=processed, batch_size=batch_size)
-                
+                """,
+                    skip=processed,
+                    batch_size=batch_size,
+                )
+
                 created = result.single()["created"]
                 processed += batch_size
-                logger.info(f"  Processed {min(processed, total_publications)}/{total_publications} publications, created {created} relationships")
-            
+                logger.info(
+                    f"  Processed {min(processed, total_publications)}/{total_publications} publications, created {created} relationships"
+                )
+
             # Step 2: タイトルと雑誌名の一致による関連付け
             logger.info("Step 2: Linking by title and magazine name patterns")
-            session.run("""
+            session.run(
+                """
                 MATCH (p:Publication)
                 WHERE p.title CONTAINS 'ONE PIECE'
                 MATCH (mi:MagazineIssue)
                 WHERE mi.name CONTAINS '週刊少年ジャンプ'
                 AND substring(p.publication_date, 0, 7) = substring(mi.publication_date, 0, 7)
                 MERGE (p)-[:PUBLISHED_IN]->(mi)
-            """)
-            
+            """
+            )
+
             # Step 3: 雑誌シリーズとの関連付け
             logger.info("Step 3: Linking publications to magazines via magazine issues")
-            session.run("""
+            session.run(
+                """
                 MATCH (p:Publication)-[:PUBLISHED_IN]->(mi:MagazineIssue)-[:ISSUE_OF]->(m:Magazine)
                 WITH p, m
                 MERGE (p)-[:PUBLISHED_IN_MAGAZINE]->(m)
-            """)
+            """
+            )
 
             # Step 4: 同じ雑誌号の作品間のリレーション
             logger.info("Step 4: Creating relationships between publications in same magazine issue")
-            session.run("""
+            session.run(
+                """
                 MATCH (p1:Publication)-[:PUBLISHED_IN]->(mi:MagazineIssue)<-[:PUBLISHED_IN]-(p2:Publication)
                 WHERE id(p1) < id(p2)
                 WITH p1, p2
                 MERGE (p1)-[:SAME_MAGAZINE_ISSUE]->(p2)
-            """)
+            """
+            )
 
             logger.info("Created magazine-based relationships")
 
@@ -518,7 +534,7 @@ class Neo4jImporter:
         """追加の関係性を作成"""
         with self.driver.session() as session:
             logger.info("Creating additional relationships with memory optimization")
-            
+
             # 雑誌ベースのリレーション数を確認
             magazine_relation_count = session.run(
                 """
@@ -632,12 +648,12 @@ def main():
         importer.create_constraints()
 
         # マンガ単行本をインポート
-        book_file = DATA_DIR / "metadata101_json" / "metadata101.json"
+        book_file = DATA_DIR / "metadata101.json"
         if book_file.exists():
             importer.import_manga_books(book_file)
 
         # マンガシリーズをインポート
-        series_file = DATA_DIR / "metadata104_json" / "metadata104.json"
+        series_file = DATA_DIR / "metadata104.json"
         if series_file.exists():
             importer.import_manga_series(series_file)
 
@@ -645,7 +661,7 @@ def main():
         magazine_file = DATA_DIR / "metadata105.json"
         if magazine_file.exists():
             importer.import_manga_magazines(magazine_file)
-            
+
         # マンガ雑誌各号をインポート (metadata102)
         magazine_issue_file = DATA_DIR / "metadata102.json"
         if magazine_issue_file.exists():

@@ -12,7 +12,7 @@ TEST_DATA_DIR.mkdir(exist_ok=True)
 
 def create_test_manga_books(limit: int = 100):
     """テスト用のマンガ単行本データを作成"""
-    source_file = DATA_DIR / "metadata101_json" / "metadata101.json"
+    source_file = DATA_DIR / "metadata101.json"
     test_file = TEST_DATA_DIR / "test_metadata101.json"
 
     with open(source_file, "r", encoding="utf-8") as f:
@@ -29,7 +29,7 @@ def create_test_manga_books(limit: int = 100):
 
 def create_test_manga_series(limit: int = 50):
     """テスト用のマンガシリーズデータを作成"""
-    source_file = DATA_DIR / "metadata104_json" / "metadata104.json"
+    source_file = DATA_DIR / "metadata104.json"
     test_file = TEST_DATA_DIR / "test_metadata104.json"
 
     with open(source_file, "r", encoding="utf-8") as f:

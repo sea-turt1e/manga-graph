@@ -16,8 +16,8 @@ from scripts.data_import.import_to_neo4j import Neo4jImporter
 def check_and_download_data():
     """Check if data exists, download if needed"""
     data_dir = Path(__file__).parent / "data" / "mediaarts"
-    book_file = data_dir / "metadata101_json" / "metadata101.json"
-    series_file = data_dir / "metadata104_json" / "metadata104.json"
+    book_file = data_dir / "metadata101.json"
+    series_file = data_dir / "metadata104.json"
 
     if book_file.exists() and series_file.exists():
         print("✅ Data files already exist")
@@ -70,7 +70,7 @@ def main():
         importer.create_constraints()
 
         # Import full manga books dataset
-        book_file = Path(__file__).parent / "data" / "mediaarts" / "metadata101_json" / "metadata101.json"
+        book_file = Path(__file__).parent / "data" / "mediaarts" / "metadata101.json"
         if book_file.exists():
             print(f"\nImporting full manga books dataset...")
             print(f"File: {book_file}")
@@ -80,7 +80,7 @@ def main():
             return
 
         # Import manga series dataset
-        series_file = Path(__file__).parent / "data" / "mediaarts" / "metadata104_json" / "metadata104.json"
+        series_file = Path(__file__).parent / "data" / "mediaarts" / "metadata104.json"
         if series_file.exists():
             print(f"\nImporting manga series dataset...")
             print(f"File: {series_file}")

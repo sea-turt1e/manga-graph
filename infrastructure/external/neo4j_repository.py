@@ -351,98 +351,42 @@ class Neo4jMangaRepository:
     def get_related_works_by_magazine_and_period(
         self, work_id: str, year_range: int = 2, limit: int = 20
     ) -> List[Dict[str, Any]]:
-        """Get works published by the same publisher in the same period"""
+        """Get works published in the same magazine during overlapping periods"""
         with self.driver.session() as session:
-            # まずシリーズごとにグループ化された作品を取得
+            # 同じ雑誌で連載期間が重複する作品を取得
             query = """
             MATCH (w1:Work {id: $work_id})-[:PUBLISHED_IN]->(m:Magazine)
-            WHERE w1.published_date IS NOT NULL AND w1.published_date <> ''
-            WITH w1, m, toInteger(substring(w1.published_date, 0, 4)) as year1
+            WITH w1, m, 
+                 toInteger(coalesce(substring(w1.first_published, 0, 4), substring(w1.last_published, 0, 4), "1900")) as start_year1,
+                 toInteger(coalesce(substring(w1.last_published, 0, 4), substring(w1.first_published, 0, 4), "2100")) as end_year1
             MATCH (w2:Work)-[:PUBLISHED_IN]->(m)
-            WHERE w2.published_date IS NOT NULL AND w2.published_date <> ''
-            AND w1.id <> w2.id
-            WITH w1, w2, p, year1, toInteger(substring(w2.published_date, 0, 4)) as year2
-            WHERE abs(year1 - year2) <= $year_range
+            WHERE w1.id <> w2.id
+            WITH w1, w2, m, start_year1, end_year1,
+                 toInteger(coalesce(substring(w2.first_published, 0, 4), substring(w2.last_published, 0, 4), "1900")) as start_year2,
+                 toInteger(coalesce(substring(w2.last_published, 0, 4), substring(w2.first_published, 0, 4), "2100")) as end_year2
+            WHERE start_year2 <= end_year1 AND end_year2 >= start_year1
+            WITH w2, m, start_year1, end_year1, start_year2, end_year2,
+                 CASE 
+                   WHEN start_year2 >= start_year1 AND end_year2 <= end_year1 THEN end_year2 - start_year2 + 1
+                   WHEN start_year1 >= start_year2 AND end_year1 <= end_year2 THEN end_year1 - start_year1 + 1
+                   WHEN start_year2 <= start_year1 AND end_year2 >= start_year1 THEN end_year2 - start_year1 + 1
+                   WHEN start_year1 <= start_year2 AND end_year1 >= start_year2 THEN end_year1 - start_year2 + 1
+                   ELSE 0
+                 END as overlap_years
+            WHERE overlap_years > 0
             OPTIONAL MATCH (w2)-[:CREATED_BY]->(a:Author)
-            OPTIONAL MATCH (s:Series)-[:CONTAINS]->(w2)
-            RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
+            RETURN w2.id as work_id, w2.title as title, 
+                   w2.first_published as first_published, w2.last_published as last_published,
                    collect(DISTINCT a.name) as creators,
                    m.title as magazine_name,
-                   abs(year1 - year2) as year_diff,
-                   w2.volume as volume,
-                   s.id as series_id,
-                   s.name as series_name
-            ORDER BY year_diff ASC, w2.published_date ASC
+                   overlap_years,
+                   start_year2 as start_year, end_year2 as end_year
+            ORDER BY overlap_years DESC, start_year2 ASC
+            LIMIT $limit
             """
 
-            result = session.run(query, work_id=work_id, year_range=year_range, limit=limit * 3)  # 多めに取得してグループ化
-            all_works = [dict(record) for record in result]
-            
-            # シリーズ作品をグループ化
-            series_groups = {}
-            standalone_works = []
-            
-            for work in all_works:
-                base_title = self._extract_base_title(work["title"])
-                
-                # シリーズIDがある場合
-                if work["series_id"]:
-                    series_key = work["series_id"]
-                    if series_key not in series_groups:
-                        series_groups[series_key] = []
-                    series_groups[series_key].append(work)
-                else:
-                    # シリーズIDがない場合、タイトルでグループ化を試みる
-                    found_group = False
-                    for key, group in series_groups.items():
-                        if group and base_title == self._extract_base_title(group[0]["title"]):
-                            series_groups[key].append(work)
-                            found_group = True
-                            break
-                    
-                    if not found_group:
-                        # 既存のグループに属さない場合は新しいグループを作るか、単独作品とする
-                        # 同じベースタイトルの作品が複数ある可能性をチェック
-                        similar_works = [w for w in all_works if self._extract_base_title(w["title"]) == base_title]
-                        if len(similar_works) > 1:
-                            series_key = f"series_{abs(hash(base_title))}"
-                            series_groups[series_key] = [work]
-                        else:
-                            standalone_works.append(work)
-            
-            # 各シリーズから第1巻を選択
-            consolidated_works = []
-            for series_works in series_groups.values():
-                if len(series_works) > 1:
-                    # 第1巻を探す
-                    first_volume = None
-                    for work in series_works:
-                        volume = work.get("volume", "")
-                        if volume and str(volume).strip():
-                            import re
-                            volume_match = re.search(r"(\d+)", str(volume))
-                            if volume_match and int(volume_match.group(1)) == 1:
-                                first_volume = work
-                                logger.debug(f"Found volume 1 for related series: {work['title']} (ID: {work['work_id']})")
-                                break
-                    
-                    # 第1巻が見つからない場合は出版日が最も古いものを選択
-                    if not first_volume:
-                        sorted_works = sorted(series_works, key=lambda x: x.get("published_date", "9999"))
-                        first_volume = sorted_works[0]
-                        logger.debug(f"Volume 1 not found for related series, using earliest: {first_volume['title']} (ID: {first_volume['work_id']})")
-                    
-                    consolidated_works.append(first_volume)
-                else:
-                    consolidated_works.append(series_works[0])
-            
-            # 単独作品を追加
-            consolidated_works.extend(standalone_works)
-            
-            # year_diffでソートして制限
-            consolidated_works.sort(key=lambda x: (x["year_diff"], x.get("published_date", "")))
-            
-            return consolidated_works[:limit]
+            result = session.run(query, work_id=work_id, year_range=year_range, limit=limit)
+            return [dict(record) for record in result]
 
     def search_manga_publications(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Search for manga publications (magazine serializations) by title"""

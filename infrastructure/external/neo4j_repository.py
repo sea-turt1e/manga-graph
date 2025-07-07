@@ -61,17 +61,16 @@ class Neo4jMangaRepository:
             query = """
             MATCH (w:Work)
             WHERE toLower(w.title) CONTAINS toLower($search_term)
-            OPTIONAL MATCH (a:Author)-[:CREATED]->(w)
-            OPTIONAL MATCH (p:Publisher)-[:PUBLISHED]->(w)
+            OPTIONAL MATCH (w)-[:CREATED_BY]->(a:Author)
+            OPTIONAL MATCH (w)-[:PUBLISHED_IN]->(m:Magazine)
+            OPTIONAL MATCH (m)-[:PUBLISHED_BY]->(p:Publisher)
             OPTIONAL MATCH (s:Series)-[:CONTAINS]->(w)
             OPTIONAL MATCH (pub:Publication)-[:RELATED_TO]->(w)
-            OPTIONAL MATCH (pub)-[:PUBLISHED_IN_MAGAZINE]->(m:Magazine)
-            OPTIONAL MATCH (m)<-[:PUBLISHED]-(publisher:Publisher)
-            OPTIONAL MATCH (pub)-[:PUBLISHED_IN]->(mi:MagazineIssue)-[:ISSUE_OF]->(m2:Magazine)
+            OPTIONAL MATCH (pub)-[:PUBLISHED_IN_MAGAZINE]->(m2:Magazine)
             RETURN w.id as work_id, w.title as title, w.published_date as published_date,
                    collect(DISTINCT a.name) as creators,
                    collect(DISTINCT p.name) as publishers,
-                   collect(DISTINCT coalesce(m.name, m2.name)) as magazines,
+                   collect(DISTINCT m.title) as magazines,
                    w.genre as genre, w.isbn as isbn, w.volume as volume,
                    s.id as series_id, s.name as series_name
             ORDER BY w.title, w.published_date
@@ -300,7 +299,7 @@ class Neo4jMangaRepository:
         """Get related works by the same author"""
         with self.driver.session() as session:
             query = """
-            MATCH (w1:Work {id: $work_id})<-[:CREATED]-(a:Author)-[:CREATED]->(w2:Work)
+            MATCH (w1:Work {id: $work_id})-[:CREATED_BY]->(a:Author)<-[:CREATED_BY]-(w2:Work)
             WHERE w1.id <> w2.id
             RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
                    a.name as author_name
@@ -314,10 +313,10 @@ class Neo4jMangaRepository:
         """Get related works by the same publisher"""
         with self.driver.session() as session:
             query = """
-            MATCH (w1:Work {id: $work_id})<-[:PUBLISHED]-(p:Publisher)-[:PUBLISHED]->(w2:Work)
+            MATCH (w1:Work {id: $work_id})-[:PUBLISHED_IN]->(m:Magazine)<-[:PUBLISHED_IN]-(w2:Work)
             WHERE w1.id <> w2.id
             RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
-                   p.name as publisher_name
+                   m.title as magazine_name
             LIMIT $limit
             """
 
@@ -338,7 +337,7 @@ class Neo4jMangaRepository:
             AND w1.id <> w2.id
             WITH w1, w2, year1, toInteger(substring(w2.published_date, 0, 4)) as year2
             WHERE abs(year1 - year2) <= $year_range
-            OPTIONAL MATCH (a:Author)-[:CREATED]->(w2)
+            OPTIONAL MATCH (w2)-[:CREATED_BY]->(a:Author)
             RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
                    collect(DISTINCT a.name) as creators,
                    abs(year1 - year2) as year_diff
@@ -356,19 +355,19 @@ class Neo4jMangaRepository:
         with self.driver.session() as session:
             # まずシリーズごとにグループ化された作品を取得
             query = """
-            MATCH (w1:Work {id: $work_id})<-[:PUBLISHED]-(p:Publisher)
+            MATCH (w1:Work {id: $work_id})-[:PUBLISHED_IN]->(m:Magazine)
             WHERE w1.published_date IS NOT NULL AND w1.published_date <> ''
-            WITH w1, p, toInteger(substring(w1.published_date, 0, 4)) as year1
-            MATCH (w2:Work)<-[:PUBLISHED]-(p)
+            WITH w1, m, toInteger(substring(w1.published_date, 0, 4)) as year1
+            MATCH (w2:Work)-[:PUBLISHED_IN]->(m)
             WHERE w2.published_date IS NOT NULL AND w2.published_date <> ''
             AND w1.id <> w2.id
             WITH w1, w2, p, year1, toInteger(substring(w2.published_date, 0, 4)) as year2
             WHERE abs(year1 - year2) <= $year_range
-            OPTIONAL MATCH (a:Author)-[:CREATED]->(w2)
+            OPTIONAL MATCH (w2)-[:CREATED_BY]->(a:Author)
             OPTIONAL MATCH (s:Series)-[:CONTAINS]->(w2)
             RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
                    collect(DISTINCT a.name) as creators,
-                   p.name as publisher_name,
+                   m.title as magazine_name,
                    abs(year1 - year2) as year_diff,
                    w2.volume as volume,
                    s.id as series_id,
@@ -845,12 +844,12 @@ class Neo4jMangaRepository:
                 stats = {}
 
                 # Count nodes
-                for label in ["Work", "Author", "Publisher", "Series"]:
+                for label in ["Work", "Author", "Publisher", "Magazine"]:
                     result = session.run(f"MATCH (n:{label}) RETURN count(n) as count")
                     stats[f"{label.lower()}_count"] = result.single()["count"]
 
                 # Count relationships
-                for rel_type in ["CREATED", "PUBLISHED", "SAME_AUTHOR", "SAME_PUBLISHER"]:
+                for rel_type in ["CREATED_BY", "PUBLISHED_IN", "PUBLISHED_BY"]:
                     result = session.run(f"MATCH ()-[r:{rel_type}]->() RETURN count(r) as count")
                     stats[f"{rel_type.lower()}_relationships"] = result.single()["count"]
 
@@ -867,8 +866,8 @@ class Neo4jMangaRepository:
         with self.driver.session() as session:
             query = """
             MATCH (w:Work {id: $work_id})
-            OPTIONAL MATCH (a:Author)-[:CREATED]->(w)
-            OPTIONAL MATCH (p:Publisher)-[:PUBLISHED]->(w)
+            OPTIONAL MATCH (w)-[:CREATED_BY]->(a:Author)
+            OPTIONAL MATCH (w)-[:PUBLISHED_IN]->(m:Magazine)-[:PUBLISHED_BY]->(p:Publisher)
             RETURN w, 
                    collect(DISTINCT a.name) as authors,
                    collect(DISTINCT p.name) as publishers

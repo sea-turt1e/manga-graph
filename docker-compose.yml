@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   neo4j:
-    image: neo4j:latest
+    image: neo4j:community
     container_name: manga-neo4j
     ports:
       - "7474:7474"

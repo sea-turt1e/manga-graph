@@ -62,6 +62,9 @@ python import_full_data.py
 # 依存関係のインストール
 pip install -r requirements.txt
 
+# 日本語形態素解析の辞書をダウンロード
+python -m unidic download
+
 # 開発サーバー起動
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```

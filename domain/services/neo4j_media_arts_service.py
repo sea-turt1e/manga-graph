@@ -237,7 +237,14 @@ class Neo4jMediaArtsService:
 
                 # Publishers and creators
                 if node_data.get("publishers"):
-                    properties["publishers"] = node_data["publishers"]
+                    # Normalize publisher names to handle parenthetical annotations
+                    from scripts.data_import.name_normalizer import normalize_publisher_name
+                    normalized_publishers = []
+                    for publisher in node_data["publishers"]:
+                        normalized = normalize_publisher_name(publisher)
+                        if normalized and normalized not in normalized_publishers:
+                            normalized_publishers.append(normalized)
+                    properties["publishers"] = normalized_publishers
                 if node_data.get("creators"):
                     properties["creators"] = node_data["creators"]
 

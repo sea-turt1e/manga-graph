@@ -39,12 +39,14 @@ def normalize_creator_name(name: str) -> str:
 
 def normalize_publisher_name(name: str) -> str:
     """
-    Normalize publisher name by removing reading annotations
+    Normalize publisher name by removing reading annotations and parenthetical annotations
     
     Examples:
         "集英社　∥　シュウエイシャ" -> "集英社"
         "講談社　∥　コウダンシャ" -> "講談社"
         "小学館" -> "小学館"
+        "集英社（発売）" -> "集英社"
+        "集英社（発売）　∥　シュウエイシャ" -> "集英社"
     
     Args:
         name: Original publisher name
@@ -59,6 +61,9 @@ def normalize_publisher_name(name: str) -> str:
     
     # Remove reading annotation part (everything after ∥ symbol)
     normalized = re.sub(r'　*∥.*$', '', normalized)
+    
+    # Remove parenthetical annotations like （発売）, （配給）, etc.
+    normalized = re.sub(r'[（(][^）)]*[）)]', '', normalized)
     
     # Remove any trailing whitespace
     normalized = normalized.strip()
@@ -176,6 +181,9 @@ def test_normalizations():
         "小学館",
         "集英社",  # Already normalized
         "　小学館　∥　ショウガクカン　",  # With spaces
+        "集英社（発売）",  # With parenthetical annotation
+        "集英社（発売）　∥　シュウエイシャ",  # With both
+        "講談社（編集）",  # Different annotation
     ]
     
     for test_name in publisher_tests:

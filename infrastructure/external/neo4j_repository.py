@@ -37,7 +37,7 @@ class Neo4jMangaRepository:
         else:
             # Create new driver
             self.uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
-            self.user = user or os.getenv("NEO4J_USER", "neo4j") 
+            self.user = user or os.getenv("NEO4J_USER", "neo4j")
             self.password = password or os.getenv("NEO4J_PASSWORD", "password")
             logger.info(f"Attempting to connect to Neo4j at {self.uri} with user {self.user}")
             try:
@@ -215,24 +215,27 @@ class Neo4jMangaRepository:
                         return (1, published_date)  # 巻数がない場合は優先度1
 
                     sorted_works = sorted(group_data["works"], key=sort_key)
-                    
+
                     # 第1巻を探す（なければ最初の巻を使用）
                     first_volume_work = None
                     for work in sorted_works:
                         volume = work.get("volume", "")
                         if volume and str(volume).strip():
                             import re
+
                             volume_match = re.search(r"(\d+)", str(volume))
                             if volume_match and int(volume_match.group(1)) == 1:
                                 first_volume_work = work
                                 logger.debug(f"Found volume 1 for series: {work['title']} (ID: {work['work_id']})")
                                 break
-                    
+
                     # 第1巻が見つからない場合は、ソート済みリストの最初を使用
                     if not first_volume_work:
                         first_volume_work = sorted_works[0]
-                        logger.debug(f"Volume 1 not found, using first sorted work: {first_volume_work['title']} (ID: {first_volume_work['work_id']}, volume: {first_volume_work.get('volume', 'N/A')})")
-                    
+                        logger.debug(
+                            f"Volume 1 not found, using first sorted work: {first_volume_work['title']} (ID: {first_volume_work['work_id']}, volume: {first_volume_work.get('volume', 'N/A')})"
+                        )
+
                     # タイトルから巻数表記を除去
                     base_title = self._extract_base_title(first_volume_work["title"])
 
@@ -375,10 +378,12 @@ class Neo4jMangaRepository:
                  END as overlap_years
             WHERE overlap_years > 0
             OPTIONAL MATCH (w2)-[:CREATED_BY]->(a:Author)
+            OPTIONAL MATCH (m)-[:PUBLISHED_BY]->(p:Publisher)
             RETURN w2.id as work_id, w2.title as title, 
                    w2.first_published as first_published, w2.last_published as last_published,
                    collect(DISTINCT a.name) as creators,
                    m.title as magazine_name,
+                   p.name as publisher_name,
                    overlap_years,
                    start_year2 as start_year, end_year2 as end_year
             ORDER BY overlap_years DESC, start_year2 ASC
@@ -434,7 +439,7 @@ class Neo4jMangaRepository:
         )
 
         main_works = self.search_manga_works(search_term, limit)
-        
+
         # Also search for publications (magazine serializations)
         publications = self.search_manga_publications(search_term, limit)
 
@@ -454,15 +459,20 @@ class Neo4jMangaRepository:
                 node = {"id": work["work_id"], "label": work["title"], "type": "work", "properties": work_data}
                 nodes.append(node)
                 node_ids_seen.add(work["work_id"])
-        
+
         # Add publications as nodes
         for publication in publications:
             if publication["publication_id"] not in node_ids_seen:
                 pub_data = {**publication, "source": "neo4j"}
-                node = {"id": publication["publication_id"], "label": publication["title"], "type": "publication", "properties": pub_data}
+                node = {
+                    "id": publication["publication_id"],
+                    "label": publication["title"],
+                    "type": "publication",
+                    "properties": pub_data,
+                }
                 nodes.append(node)
                 node_ids_seen.add(publication["publication_id"])
-                
+
             # Add authors and magazines for publications
             for creator in publication["creators"]:
                 if creator:
@@ -471,28 +481,50 @@ class Neo4jMangaRepository:
                         if normalized_creator:
                             author_id = generate_normalized_id(normalized_creator, "author")
                             if author_id not in node_ids_seen:
-                                author_node = {"id": author_id, "label": normalized_creator, "type": "author", "properties": {"source": "neo4j", "name": normalized_creator}}
+                                author_node = {
+                                    "id": author_id,
+                                    "label": normalized_creator,
+                                    "type": "author",
+                                    "properties": {"source": "neo4j", "name": normalized_creator},
+                                }
                                 nodes.append(author_node)
                                 node_ids_seen.add(author_id)
 
                             edge_id = f"{author_id}-created-{publication['publication_id']}"
                             if edge_id not in edge_ids_seen:
-                                edge = {"id": edge_id, "source": author_id, "target": publication["publication_id"], "type": "created", "properties": {"source": "neo4j"}}
+                                edge = {
+                                    "id": edge_id,
+                                    "source": author_id,
+                                    "target": publication["publication_id"],
+                                    "type": "created",
+                                    "properties": {"source": "neo4j"},
+                                }
                                 edges.append(edge)
                                 edge_ids_seen.add(edge_id)
-            
+
             # Add magazines for publications
             for magazine in publication["magazines"]:
                 if magazine:
                     magazine_id = generate_normalized_id(magazine, "magazine")
                     if magazine_id not in node_ids_seen:
-                        magazine_node = {"id": magazine_id, "label": magazine, "type": "magazine", "properties": {"source": "neo4j", "name": magazine}}
+                        magazine_node = {
+                            "id": magazine_id,
+                            "label": magazine,
+                            "type": "magazine",
+                            "properties": {"source": "neo4j", "name": magazine},
+                        }
                         nodes.append(magazine_node)
                         node_ids_seen.add(magazine_id)
 
                     edge_id = f"{magazine_id}-published-{publication['publication_id']}"
                     if edge_id not in edge_ids_seen:
-                        edge = {"id": edge_id, "source": magazine_id, "target": publication["publication_id"], "type": "published", "properties": {"source": "neo4j"}}
+                        edge = {
+                            "id": edge_id,
+                            "source": magazine_id,
+                            "target": publication["publication_id"],
+                            "type": "published",
+                            "properties": {"source": "neo4j"},
+                        }
                         edges.append(edge)
                         edge_ids_seen.add(edge_id)
 
@@ -507,13 +539,24 @@ class Neo4jMangaRepository:
                         if normalized_creator:
                             author_id = generate_normalized_id(normalized_creator, "author")
                             if author_id not in node_ids_seen:
-                                author_node = {"id": author_id, "label": normalized_creator, "type": "author", "properties": {"source": "neo4j", "name": normalized_creator}}
+                                author_node = {
+                                    "id": author_id,
+                                    "label": normalized_creator,
+                                    "type": "author",
+                                    "properties": {"source": "neo4j", "name": normalized_creator},
+                                }
                                 nodes.append(author_node)
                                 node_ids_seen.add(author_id)
 
                             edge_id = f"{author_id}-created-{work['work_id']}"
                             if edge_id not in edge_ids_seen:
-                                edge = {"id": edge_id, "source": author_id, "target": work["work_id"], "type": "created", "properties": {"source": "neo4j"}}
+                                edge = {
+                                    "id": edge_id,
+                                    "source": author_id,
+                                    "target": work["work_id"],
+                                    "type": "created",
+                                    "properties": {"source": "neo4j"},
+                                }
                                 edges.append(edge)
                                 edge_ids_seen.add(edge_id)
 
@@ -522,37 +565,71 @@ class Neo4jMangaRepository:
                 if magazine:
                     magazine_id = generate_normalized_id(magazine, "magazine")
                     if magazine_id not in node_ids_seen:
-                        magazine_node = {"id": magazine_id, "label": magazine, "type": "magazine", "properties": {"source": "neo4j", "name": magazine}}
+                        magazine_node = {
+                            "id": magazine_id,
+                            "label": magazine,
+                            "type": "magazine",
+                            "properties": {"source": "neo4j", "name": magazine},
+                        }
                         nodes.append(magazine_node)
                         node_ids_seen.add(magazine_id)
 
                     edge_id = f"{magazine_id}-published-{work['work_id']}"
                     if edge_id not in edge_ids_seen:
-                        edge = {"id": edge_id, "source": magazine_id, "target": work["work_id"], "type": "published", "properties": {"source": "neo4j"}}
+                        edge = {
+                            "id": edge_id,
+                            "source": magazine_id,
+                            "target": work["work_id"],
+                            "type": "published",
+                            "properties": {"source": "neo4j"},
+                        }
                         edges.append(edge)
                         edge_ids_seen.add(edge_id)
-
-            # Add publishers as nodes and create edges (only if no magazines)
-            if not work["magazines"]:
-                for publisher in work["publishers"]:
-                    if publisher:
-                        normalized_publisher = normalize_publisher_name(publisher)
-                        if normalized_publisher:
-                            publisher_id = generate_normalized_id(normalized_publisher, "publisher")
-                            if publisher_id not in node_ids_seen:
-                                publisher_node = {"id": publisher_id, "label": normalized_publisher, "type": "publisher", "properties": {"source": "neo4j", "name": normalized_publisher}}
-                                nodes.append(publisher_node)
-                                node_ids_seen.add(publisher_id)
-
-                        edge_id = f"{publisher_id}-published-{work['work_id']}"
-                        if edge_id not in edge_ids_seen:
-                            edge = {"id": edge_id, "source": publisher_id, "target": work["work_id"], "type": "published", "properties": {"source": "neo4j"}}
-                            edges.append(edge)
-                            edge_ids_seen.add(edge_id)
+                # Add publishers as nodes and create edges (only if no magazines)
+                if not work["magazines"]:
+                    for publisher in work["publishers"]:
+                        if publisher:
+                            normalized_publisher = normalize_publisher_name(publisher)
+                            if normalized_publisher:
+                                publisher_id = generate_normalized_id(normalized_publisher, "publisher")
+                                if publisher_id not in node_ids_seen:
+                                    publisher_node = {
+                                        "id": publisher_id,
+                                        "label": normalized_publisher,
+                                        "type": "publisher",
+                                        "properties": {"source": "neo4j", "name": normalized_publisher},
+                                    }
+                                    nodes.append(publisher_node)
+                                    node_ids_seen.add(publisher_id)
+                            edge_id = f"{publisher_id}-published-{work['work_id']}"
+                            if edge_id not in edge_ids_seen:
+                                edge = {
+                                    "id": edge_id,
+                                    "source": publisher_id,
+                                    "target": work["work_id"],
+                                    "type": "published",
+                                    "properties": {"source": "neo4j"},
+                                }
+                                edges.append(edge)
+                                edge_ids_seen.add(edge_id)
 
         # Add related works if requested
         if include_related and main_works:
-            main_work_id = main_works[0]["work_id"]
+            # 最も多くの雑誌関係を持つ作品を選択（通常はメインシリーズ）
+            main_work = None
+            max_magazines = 0
+            for work in main_works:
+                magazine_count = len(work.get("magazines", []))
+                if magazine_count > max_magazines:
+                    max_magazines = magazine_count
+                    main_work = work
+
+            # 雑誌がない場合は最初の作品を使用
+            if main_work is None:
+                main_work = main_works[0]
+
+            main_work_id = main_work["work_id"]
+            logger.info(f"Selected main work for related search: {main_work['title']} (ID: {main_work_id})")
 
             # Add works by same author
             author_related = self.get_related_works_by_author(main_work_id, 5)
@@ -573,7 +650,13 @@ class Neo4jMangaRepository:
                 if author_id in node_ids_seen:
                     edge_id = f"{author_id}-created-{related['work_id']}"
                     if edge_id not in edge_ids_seen:
-                        edge = {"id": edge_id, "source": author_id, "target": related["work_id"], "type": "created", "properties": {"source": "neo4j"}}
+                        edge = {
+                            "id": edge_id,
+                            "source": author_id,
+                            "target": related["work_id"],
+                            "type": "created",
+                            "properties": {"source": "neo4j"},
+                        }
                         edges.append(edge)
                         edge_ids_seen.add(edge_id)
 
@@ -599,7 +682,12 @@ class Neo4jMangaRepository:
                             for normalized_creator in normalized_creators:
                                 if normalized_creator:
                                     author_id = generate_normalized_id(normalized_creator, "author")
-                                    author_node = {"id": author_id, "label": normalized_creator, "type": "author", "properties": {"source": "neo4j", "name": normalized_creator}}
+                                    author_node = {
+                                        "id": author_id,
+                                        "label": normalized_creator,
+                                        "type": "author",
+                                        "properties": {"source": "neo4j", "name": normalized_creator},
+                                    }
                                 if author_id not in node_ids_seen:
                                     nodes.append(author_node)
                                     node_ids_seen.add(author_id)
@@ -611,33 +699,66 @@ class Neo4jMangaRepository:
                                         "source": author_id,
                                         "target": related["work_id"],
                                         "type": "created",
-                                        "properties": {"source": "neo4j"}
+                                        "properties": {"source": "neo4j"},
                                     }
                                     edges.append(edge)
                                     edge_ids_seen.add(edge_id)
 
-                    # Add publishers
-                    # Handle single publisher from query result
-                    if related.get("publisher_name"):
-                        normalized_publisher = normalize_publisher_name(related["publisher_name"])
-                        if normalized_publisher:
-                            publisher_id = generate_normalized_id(normalized_publisher, "publisher")
-                            publisher_node = {"id": publisher_id, "label": normalized_publisher, "type": "publisher", "properties": {"source": "neo4j", "name": normalized_publisher}}
-                        if publisher_id not in node_ids_seen:
-                            nodes.append(publisher_node)
-                            node_ids_seen.add(publisher_id)
+                    # Add magazines (missing part - this was causing the issue)
+                    if related.get("magazine_name"):
+                        magazine_id = generate_normalized_id(related["magazine_name"], "magazine")
+                        if magazine_id not in node_ids_seen:
+                            magazine_node = {
+                                "id": magazine_id,
+                                "label": related["magazine_name"],
+                                "type": "magazine",
+                                "properties": {"source": "neo4j", "name": related["magazine_name"]},
+                            }
+                            nodes.append(magazine_node)
+                            node_ids_seen.add(magazine_id)
 
-                        edge_id = f"{publisher_id}-published-{related['work_id']}"
+                        edge_id = f"{magazine_id}-published-{related['work_id']}"
                         if edge_id not in edge_ids_seen:
                             edge = {
                                 "id": edge_id,
-                                "source": publisher_id,
+                                "source": magazine_id,
                                 "target": related["work_id"],
                                 "type": "published",
-                                "properties": {"source": "neo4j"}
+                                "properties": {"source": "neo4j"},
                             }
                             edges.append(edge)
                             edge_ids_seen.add(edge_id)
+
+                        # Add publisher for this magazine if available
+                        if related.get("publisher_name"):
+                            normalized_publisher = normalize_publisher_name(related["publisher_name"])
+                            if normalized_publisher:
+                                publisher_id = generate_normalized_id(normalized_publisher, "publisher")
+                                if publisher_id not in node_ids_seen:
+                                    publisher_node = {
+                                        "id": publisher_id,
+                                        "label": normalized_publisher,
+                                        "type": "publisher",
+                                        "properties": {"source": "neo4j", "name": normalized_publisher},
+                                    }
+                                    nodes.append(publisher_node)
+                                    node_ids_seen.add(publisher_id)
+
+                                # Create magazine -> publisher edge
+                                mag_pub_edge_id = f"{magazine_id}-published_by-{publisher_id}"
+                                if mag_pub_edge_id not in edge_ids_seen:
+                                    mag_pub_edge = {
+                                        "id": mag_pub_edge_id,
+                                        "source": magazine_id,
+                                        "target": publisher_id,
+                                        "type": "published_by",
+                                        "properties": {"source": "neo4j"},
+                                    }
+                                    edges.append(mag_pub_edge)
+                                    edge_ids_seen.add(mag_pub_edge_id)
+
+                    # Note: publisher nodes are now only created through magazine relationships
+                    # Direct work -> publisher edges are removed as requested
 
                 # Create "same_publisher_period" edge between main work and related work
                 if related.get("publisher_name"):
@@ -648,7 +769,10 @@ class Neo4jMangaRepository:
                             "source": main_work_id,
                             "target": related["work_id"],
                             "type": "same_publisher_period",
-                            "properties": {"source": "neo4j", "description": f"同じ出版社({related['publisher_name']})・同時期"}
+                            "properties": {
+                                "source": "neo4j",
+                                "description": f"同じ出版社({related['publisher_name']})・同時期",
+                            },
                         }
                         edges.append(edge)
                         edge_ids_seen.add(edge_id)
@@ -674,7 +798,12 @@ class Neo4jMangaRepository:
                             for normalized_creator in normalized_creators:
                                 if normalized_creator:
                                     author_id = generate_normalized_id(normalized_creator, "author")
-                                    author_node = {"id": author_id, "label": normalized_creator, "type": "author", "properties": {"source": "neo4j", "name": normalized_creator}}
+                                    author_node = {
+                                        "id": author_id,
+                                        "label": normalized_creator,
+                                        "type": "author",
+                                        "properties": {"source": "neo4j", "name": normalized_creator},
+                                    }
                                 if author_id not in node_ids_seen:
                                     nodes.append(author_node)
                                     node_ids_seen.add(author_id)
@@ -686,7 +815,7 @@ class Neo4jMangaRepository:
                                         "source": author_id,
                                         "target": related["work_id"],
                                         "type": "created",
-                                        "properties": {"source": "neo4j"}
+                                        "properties": {"source": "neo4j"},
                                     }
                                     edges.append(edge)
                                     edge_ids_seen.add(edge_id)

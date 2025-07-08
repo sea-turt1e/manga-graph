@@ -1,12 +1,12 @@
 import json
 import os
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 from kanjiconv import KanjiConv
 from neo4j import GraphDatabase
-import re
 
 
 # データ読み込み関数
@@ -92,23 +92,70 @@ def extract_magazines_from_description(description):
     """schema:descriptionフィールドから雑誌名を抽出する"""
     if not description or not isinstance(description, str):
         return []
-    
+
     magazines = []
     # 「初出：」で始まる部分を探す
     if "初出：" in description:
         # 初出：以降の部分を取得
         initial_part = description.split("初出：", 1)[1]
-        
+
         # 「」で囲まれた雑誌名を抽出
-        magazine_matches = re.findall(r'「([^」]+)」', initial_part)
-        
+        magazine_matches = re.findall(r"「([^」]+)」", initial_part)
+
         for magazine in magazine_matches:
             # 雑誌名をクリーンアップ（余分な文字を除去）
             clean_magazine = magazine.strip()
             if clean_magazine and len(clean_magazine) > 1:  # 空でなく、1文字以上
                 magazines.append(clean_magazine)
-    
+
     return magazines
+
+
+def extract_magazines_from_brand(brand_field):
+    """schema:brandフィールドから雑誌名を抽出する"""
+    if not brand_field:
+        return []
+
+    magazines = []
+
+    # リストの場合
+    if isinstance(brand_field, list):
+        for item in brand_field:
+            if isinstance(item, str):
+                # "=" で区切られている場合は最初の部分を使用
+                magazine_name = item.split("=")[0].strip()
+                if magazine_name:
+                    # ジャンプ・コミックス -> 週刊少年ジャンプに変換
+                    normalized_name = normalize_brand_to_magazine(magazine_name)
+                    magazines.append(normalized_name)
+            elif isinstance(item, dict) and "@value" in item:
+                # 辞書形式の場合
+                magazine_name = item["@value"].split("=")[0].strip()
+                if magazine_name:
+                    normalized_name = normalize_brand_to_magazine(magazine_name)
+                    magazines.append(normalized_name)
+    # 文字列の場合
+    elif isinstance(brand_field, str):
+        magazine_name = brand_field.split("=")[0].strip()
+        if magazine_name:
+            normalized_name = normalize_brand_to_magazine(magazine_name)
+            magazines.append(normalized_name)
+
+    return magazines
+
+
+def normalize_brand_to_magazine(brand_name):
+    """ブランド名を雑誌名に正規化"""
+    brand_to_magazine = {
+        "ジャンプ・コミックス": "週刊少年ジャンプ",
+        "ジャンプ コミックス": "週刊少年ジャンプ",
+        "ジャンプコミックス": "週刊少年ジャンプ",
+        "少年サンデーコミックス": "週刊少年サンデー",
+        "少年マガジンコミックス": "週刊少年マガジン",
+        "少年チャンピオン・コミックス": "週刊少年チャンピオン",
+    }
+
+    return brand_to_magazine.get(brand_name, brand_name)
 
 
 class MangaGraphDB:
@@ -153,7 +200,7 @@ class MangaGraphDB:
         # 最初の本から@idを取得
         first_book = work_data["books"][0] if work_data["books"] else {}
         work_id = first_book.get("@id", "")
-        
+
         # @idがない場合は作品名から生成
         if not work_id:
             work_id = work_name.upper()
@@ -195,7 +242,7 @@ class MangaGraphDB:
                     "is_series": is_series,
                 },
             )
-            
+
         return work_id  # 作成したwork_idを返す
 
     def create_author_node(self, author_id, author_name=None):
@@ -348,9 +395,11 @@ try:
 
     # データの分類
     manga_books = []
+    manga_series = []  # MangaBookSeriesを収集
     magazines = []
     authors_data = {}  # author_id -> author_data
     publishers = set()
+    series_magazine_map = {}  # series_id -> set of magazines
 
     print("\nClassifying data...")
     error_count = 0
@@ -407,6 +456,50 @@ try:
                         pub_name = publisher.get("@value", publisher.get("name", ""))
                         if pub_name and isinstance(pub_name, str):
                             publishers.add(pub_name)
+
+            elif item_type == "class:MangaBookSeries" and genre == "マンガ単行本シリーズ":
+                manga_series.append(item)
+
+                # シリーズのschema:brandから雑誌情報を収集
+                series_id = item.get("@id", "")
+                if series_id:
+                    brand = item.get("schema:brand", [])
+                    if brand:
+                        magazines_from_brand = extract_magazines_from_brand(brand)
+                        if magazines_from_brand:
+                            series_magazine_map[series_id] = set(magazines_from_brand)
+
+                # シリーズの著者情報も収集
+                creator = item.get("dcterms:creator", {})
+                if isinstance(creator, list):
+                    for cr in creator:
+                        if isinstance(cr, dict) and "@id" in cr:
+                            author_id = cr["@id"]
+                            if author_id not in authors_data:
+                                authors_data[author_id] = {"id": author_id, "names": set()}
+                elif isinstance(creator, dict) and "@id" in creator:
+                    author_id = creator["@id"]
+                    if author_id not in authors_data:
+                        authors_data[author_id] = {"id": author_id, "names": set()}
+
+                # schema:creatorからも著者名を収集
+                creator_names = item.get("schema:creator", [])
+                if isinstance(creator_names, str):
+                    creator_names = [creator_names]
+                elif not isinstance(creator_names, list):
+                    creator_names = []
+
+                # 最初の著者IDに名前を関連付け
+                if creator_names and series_id:
+                    first_creator = creator
+                    if isinstance(creator, list) and creator:
+                        first_creator = creator[0]
+
+                    if isinstance(first_creator, dict) and "@id" in first_creator:
+                        author_id = first_creator["@id"]
+                        for name in creator_names:
+                            if isinstance(name, str) and name:
+                                authors_data[author_id]["names"].add(name)
 
             elif genre in ["マンガ雑誌", "雑誌", "雑誌全号まとめ"] or "Magazine" in item_type:
                 magazines.append(item)
@@ -520,12 +613,54 @@ try:
                 for magazine_name in extracted_magazines:
                     work_magazine_map[work_key].add(magazine_name)
 
-    print(f"\nFound {len(manga_books)} manga books")
+    # シリーズから得た雑誌情報を作品に適用
+    print(f"\nApplying series magazine information to works...")
+    series_matches = 0
+    for series_id, series_magazines in series_magazine_map.items():
+        # シリーズ名を取得
+        series_name = None
+        for series in manga_series:
+            if series.get("@id") == series_id:
+                series_name = series.get("schema:name", "")
+                if isinstance(series_name, list):
+                    series_name = series_name[0] if series_name else ""
+                elif isinstance(series_name, dict):
+                    series_name = series_name.get("@value", "")
+                break
+
+        if series_name and isinstance(series_name, str):
+            # 作品名を正規化してマッチング
+            series_key = series_name.upper()
+
+            # 完全一致を試す
+            if series_key in work_dict:
+                for magazine_name in series_magazines:
+                    work_magazine_map[series_key].add(magazine_name)
+                series_matches += 1
+                # print(f"  Matched series: {series_name} -> {list(series_magazines)}")
+            else:
+                # 部分一致を試す（例：「ドラゴンボール」シリーズと「ドラゴンボール」単行本）
+                for work_key in work_dict.keys():
+                    # シリーズ名が作品名に含まれる、または作品名がシリーズ名に含まれる
+                    if (series_key in work_key or work_key in series_key) and abs(
+                        len(series_key) - len(work_key)
+                    ) <= 10:
+                        for magazine_name in series_magazines:
+                            work_magazine_map[work_key].add(magazine_name)
+                        series_matches += 1
+                        # print(
+                        #     f"  Partial match: {series_name} -> {work_dict[work_key]['name']} -> {list(series_magazines)}"
+                        # )
+                        break
+
+    print(f"Found {len(manga_books)} manga books")
+    print(f"Found {len(manga_series)} manga series")
     print(f"Found {len(work_dict)} unique works")
     print(f"Found {len(magazines)} magazines")
     print(f"Found {len(authors_data)} authors")
+    print(f"Applied {series_matches} series magazine mappings")
     print(f"Found {len(publishers)} publishers")
-    
+
     # デバッグ情報を追加
     total_magazine_relations = sum(len(mags) for mags in work_magazine_map.values())
     print(f"Found {total_magazine_relations} work-magazine relationships")
@@ -596,7 +731,7 @@ try:
             title = magazine.get("schema:name", "")
             if isinstance(title, list):
                 title = title[0] if title else ""
-            
+
             # 雑誌名をキーとして保存
             if title:
                 magazine_map[title] = normalized_id
@@ -627,7 +762,7 @@ try:
     # 4. 作品ノードの作成と関係の構築
     print("\nCreating work nodes and relationships...")
     work_items = list(work_dict.items())
-    
+
     # デバッグ: 雑誌マップのサンプルを表示
     print("\nMagazine map sample (first 10):")
     for i, (name, mag_id) in enumerate(list(magazine_map.items())[:10]):
@@ -639,7 +774,7 @@ try:
             for work_key, work_data in batch:
                 # 作品ノードを作成
                 work_id = db.create_work_node(work_data["name"], work_data)
-                
+
                 # work_idがNoneの場合はスキップ
                 if not work_id:
                     print(f"  Warning: Failed to create work node for {work_data['name']}")
@@ -657,7 +792,7 @@ try:
                     print(f"  Work: {work_data['name']}")
                     print(f"  Magazines from work: {magazine_names}")
                     print(f"  Magazines found in map: {[m for m in magazine_names if m in magazine_map]}")
-                
+
                 for magazine_name in magazine_names:
                     # 雑誌名で直接検索
                     if magazine_name in magazine_map:

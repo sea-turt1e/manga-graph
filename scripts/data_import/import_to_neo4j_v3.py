@@ -179,18 +179,39 @@ def extract_magazines_from_brand(brand_field):
     return magazines
 
 
+def load_brand_to_magazine_mapping():
+    """brand_to_magazine.jsonからマッピングデータを読み込む"""
+    script_dir = Path(__file__).parent
+    mapping_file = script_dir / "brand_to_magazine.json"
+    
+    if mapping_file.exists():
+        with open(mapping_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            # ネストされた辞書をフラットな辞書に変換
+            flat_mapping = {}
+            for category, mappings in data.items():
+                flat_mapping.update(mappings)
+            return flat_mapping
+    else:
+        # ファイルが見つからない場合はデフォルトのマッピングを返す
+        print(f"Warning: {mapping_file} not found. Using default mappings.")
+        return {
+            "ジャンプ・コミックス": "週刊少年ジャンプ",
+            "ジャンプ コミックス": "週刊少年ジャンプ",
+            "ジャンプコミックス": "週刊少年ジャンプ",
+            "少年サンデーコミックス": "週刊少年サンデー",
+            "少年マガジンコミックス": "週刊少年マガジン",
+            "少年チャンピオン・コミックス": "週刊少年チャンピオン",
+        }
+
+
 def normalize_brand_to_magazine(brand_name):
     """ブランド名を雑誌名に正規化"""
-    brand_to_magazine = {
-        "ジャンプ・コミックス": "週刊少年ジャンプ",
-        "ジャンプ コミックス": "週刊少年ジャンプ",
-        "ジャンプコミックス": "週刊少年ジャンプ",
-        "少年サンデーコミックス": "週刊少年サンデー",
-        "少年マガジンコミックス": "週刊少年マガジン",
-        "少年チャンピオン・コミックス": "週刊少年チャンピオン",
-    }
-
-    return brand_to_magazine.get(brand_name, brand_name)
+    # 初回呼び出し時にマッピングをロード
+    if not hasattr(normalize_brand_to_magazine, "_mapping"):
+        normalize_brand_to_magazine._mapping = load_brand_to_magazine_mapping()
+    
+    return normalize_brand_to_magazine._mapping.get(brand_name, brand_name)
 
 
 class MangaGraphDB:

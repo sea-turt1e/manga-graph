@@ -30,6 +30,41 @@ class NameNormalizer:
         self.kanjiconv = KanjiConv()
         self.name_map = {}  # 正規化名 -> 表示名のマッピング
         self.reverse_map = {}  # 入力名 -> 正規化名のマッピング
+        
+    def is_editorial_author(self, name):
+        """編集部・出版社関連の作者かどうかを判定"""
+        if not name or not isinstance(name, str):
+            return False
+        
+        # 編集部・出版社関連のキーワード
+        editorial_keywords = [
+            '編集部', '出版編集部', 'コミック出版編集部', 'コミックス出版編集部',
+            '企画・編集', '企画編集', '編集', '構成・編集', '構成編集',
+            'ジャンプ編集部', 'Vジャンプ編集部', '週刊少年ジャンプ編集部',
+            'ジャンプ・コミック出版編集部', 'ジャンプコミック出版編集部',
+            'ジャンプコミックス出版編集部'
+        ]
+        
+        for keyword in editorial_keywords:
+            if keyword in name:
+                return True
+        return False
+    
+    def extract_author_name(self, name):
+        """役割プレフィックスを除去して実際の作者名を取得"""
+        if not name or not isinstance(name, str):
+            return name
+        
+        # 役割プレフィックスのパターン
+        import re
+        # [著]、[原作]、[漫画]、[作]、[作画]、[脚本]等を除去
+        pattern = r'^\[.*?\]'
+        clean_name = re.sub(pattern, '', name).strip()
+        
+        # 追加の清掃: 「・かんしゅう」などの付加情報を除去
+        clean_name = clean_name.split('・')[0].strip()
+        
+        return clean_name if clean_name else name
 
     def normalize(self, name):
         """名前を正規化（ひらがなに変換）"""
@@ -360,6 +395,9 @@ print("=== Neo4j Import v3 ===")
 # データベースクリアの確認
 clear_db = input("\nClear database before import? (y/N): ").strip().lower()
 
+# グローバルなNameNormalizerインスタンスを作成
+author_normalizer = NameNormalizer()
+
 try:
     db = MangaGraphDB(neo4j_uri, neo4j_user, neo4j_password)
 
@@ -431,11 +469,15 @@ try:
 
                     for name in creator_names:
                         if isinstance(name, str) and name:
-                            authors_data[author_id]["names"].add(name)
+                            # 編集部・出版社関連の作者を除外
+                            if not author_normalizer.is_editorial_author(name):
+                                authors_data[author_id]["names"].add(name)
                         elif isinstance(name, dict):
                             name_value = name.get("@value", name.get("name", ""))
                             if name_value and isinstance(name_value, str):
-                                authors_data[author_id]["names"].add(name_value)
+                                # 編集部・出版社関連の作者を除外
+                                if not author_normalizer.is_editorial_author(name_value):
+                                    authors_data[author_id]["names"].add(name_value)
 
                 # 出版社情報を収集
                 publisher = item.get("schema:publisher", "")
@@ -499,7 +541,9 @@ try:
                         author_id = first_creator["@id"]
                         for name in creator_names:
                             if isinstance(name, str) and name:
-                                authors_data[author_id]["names"].add(name)
+                                # 編集部・出版社関連の作者を除外
+                                if not author_normalizer.is_editorial_author(name):
+                                    authors_data[author_id]["names"].add(name)
 
             elif genre in ["マンガ雑誌", "雑誌", "雑誌全号まとめ"] or "Magazine" in item_type:
                 magazines.append(item)
@@ -696,15 +740,29 @@ try:
             best_priority = 0
 
             for name in author_data["names"]:
+                # 編集部・出版社関連の作者を除外
+                if author_normalizer.is_editorial_author(name):
+                    continue
+                    
+                # 実際の作者名を抽出
+                clean_name = author_normalizer.extract_author_name(name)
+                
                 priority = 0
-                if any("\u4e00" <= char <= "\u9fff" for char in name):  # 漢字
+                # 実際の作者名（役割プレフィックス除去後）に基づいて優先度を決定
+                if any("\u4e00" <= char <= "\u9fff" for char in clean_name):  # 漢字
                     priority = 4
-                elif any("A" <= char <= "Z" or "a" <= char <= "z" for char in name):  # ローマ字
+                elif any("A" <= char <= "Z" or "a" <= char <= "z" for char in clean_name):  # ローマ字
                     priority = 3
-                elif any("\u30a0" <= char <= "\u30ff" for char in name):  # カタカナ
+                elif any("\u30a0" <= char <= "\u30ff" for char in clean_name):  # カタカナ
                     priority = 2
                 else:  # ひらがな
                     priority = 1
+                
+                # 役割プレフィックスがある場合は優先度を上げる
+                if name.startswith('[') and ']' in name:
+                    role = name.split(']')[0] + ']'
+                    if role in ['[著]', '[原作]', '[漫画]', '[作]', '[作画]']:
+                        priority += 5  # 実際の作者役割を優先
 
                 if priority > best_priority:
                     best_priority = priority

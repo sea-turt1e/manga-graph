@@ -23,7 +23,7 @@ class TestNeo4jMangaRepository:
         # Assert
         assert self.repository.driver == mock_driver
         mock_graph_database.driver.assert_called_once_with(
-            "bolt://localhost:7687", 
+            "bolt://localhost:7687",
             auth=("neo4j", "password")
         )
 
@@ -69,12 +69,12 @@ class TestNeo4jMangaRepository:
         mock_tx = Mock()
         mock_result = Mock()
         mock_result.__iter__ = Mock(return_value=iter([]))
-        
+
         mock_tx.run.return_value = mock_result
         mock_session.execute_read.return_value = {"nodes": [], "edges": []}
         mock_driver.session.return_value.__enter__.return_value = mock_session
         mock_graph_database.driver.return_value = mock_driver
-        
+
         self.repository.connect()
 
         # Act

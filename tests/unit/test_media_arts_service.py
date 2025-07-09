@@ -1,5 +1,4 @@
-import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 from domain.services import MediaArtsDataService
 from infrastructure.external import MediaArtsSPARQLClient
 
@@ -33,16 +32,16 @@ class TestMediaArtsDataService:
         assert 'edges' in result
         assert len(result['nodes']) == 2  # work + creator
         assert len(result['edges']) == 1  # created relationship
-        
+
         # Check work node
         work_node = next(node for node in result['nodes'] if node['type'] == 'work')
         assert work_node['label'] == 'ONE PIECE'
         assert work_node['properties']['source'] == 'media_arts_db'
-        
+
         # Check creator node
         creator_node = next(node for node in result['nodes'] if node['type'] == 'author')
         assert creator_node['label'] == '尾田栄一郎'
-        
+
         # Check edge
         edge = result['edges'][0]
         assert edge['type'] == 'created'
@@ -126,11 +125,11 @@ class TestMediaArtsDataService:
         assert 'edges' in result
         assert len(result['nodes']) == 2  # magazine + publisher
         assert len(result['edges']) == 1  # publishes relationship
-        
+
         # Check magazine node
         magazine_node = next(node for node in result['nodes'] if node['type'] == 'magazine')
         assert magazine_node['label'] == '週刊少年ジャンプ'
-        
+
         # Check publisher node
         publisher_node = next(node for node in result['nodes'] if node['type'] == 'publisher')
         assert publisher_node['label'] == '集英社'
@@ -155,7 +154,7 @@ class TestMediaArtsDataService:
         assert 'edges' in result
         assert len(result['nodes']) == 1
         assert len(result['edges']) == 0  # 全文検索では関係性情報が限定的
-        
+
         node = result['nodes'][0]
         assert node['label'] == 'テスト漫画'
         assert node['properties']['source'] == 'media_arts_db'

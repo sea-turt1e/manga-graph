@@ -4,8 +4,7 @@ Book cover image service for retrieving cover images from various sources
 """
 import logging
 import time
-from typing import Any, Dict, List, Optional
-from urllib.parse import urlencode
+from typing import Any, Dict, Optional
 
 import requests
 
@@ -193,7 +192,6 @@ class CoverImageService:
             return "/static/images/placeholders/manga-cover.png"
         elif publisher:
             # Publisher-specific placeholder
-            publisher_lower = publisher.lower()
             if "集英社" in publisher:
                 return "/static/images/placeholders/shueisha-cover.png"
             elif "講談社" in publisher:

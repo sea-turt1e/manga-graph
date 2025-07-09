@@ -1,4 +1,3 @@
-import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, Mock
 from main import app
@@ -7,7 +6,7 @@ client = TestClient(app)
 
 
 class TestMediaArtsAPI:
-    
+
     @patch('domain.services.media_arts_service.MediaArtsSPARQLClient')
     def test_search_media_arts_endpoint(self, mock_sparql_client):
         # Arrange
@@ -173,12 +172,12 @@ class TestMediaArtsAPI:
         assert "edges" in data
         assert data["total_nodes"] >= 0
         assert data["total_edges"] >= 0
-        
+
         # Should contain data from media arts database
         if data["nodes"]:
             # Check if any node has media_arts_db source
-            has_media_arts_data = any(
-                node.get("properties", {}).get("source") == "media_arts_db" 
+            assert any(
+                node.get("properties", {}).get("source") == "media_arts_db"
                 for node in data["nodes"]
             )
             # Note: This assertion might not always pass if the mock doesn't work as expected

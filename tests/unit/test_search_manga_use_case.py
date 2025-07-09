@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import Mock
 from domain.use_cases import SearchMangaUseCase
 from domain.repositories import MangaRepository

@@ -2,7 +2,6 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-import requests
 from requests.exceptions import RequestException, Timeout
 from SPARQLWrapper import JSON, SPARQLWrapper
 
@@ -72,32 +71,32 @@ class MediaArtsSPARQLClient:
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         PREFIX madb: <https://mediaarts-db.artmuseums.go.jp/data/class#>
         PREFIX dcterms: <http://purl.org/dc/terms/>
-        
+
         SELECT DISTINCT ?work ?title ?creator ?creatorName ?genre ?publisher ?publishedDate
         WHERE {{
             ?work a madb:MangaBook .
             ?work schema:name ?title .
-            
+
             FILTER(
                 CONTAINS(LCASE(?title), LCASE("{search_term}"))
             )
-            
+
             OPTIONAL {{
                 ?work schema:creator ?creatorName .
             }}
-            
+
             OPTIONAL {{
                 ?work dcterms:creator ?creator .
             }}
-            
+
             OPTIONAL {{
                 ?work schema:genre ?genre .
             }}
-            
+
             OPTIONAL {{
                 ?work schema:publisher ?publisher .
             }}
-            
+
             OPTIONAL {{
                 ?work schema:datePublished ?publishedDate .
             }}
@@ -148,24 +147,24 @@ class MediaArtsSPARQLClient:
         query = f"""
         PREFIX schema: <http://schema.org/>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        
+
         SELECT DISTINCT ?work ?title ?creator ?creatorName ?genre ?publisher ?publishedDate
         WHERE {{
             ?creator rdfs:label ?creatorName .
             FILTER(CONTAINS(LCASE(?creatorName), LCASE("{creator_name}")))
-            
+
             ?work schema:creator ?creator ;
                   rdfs:label ?title ;
                   schema:genre ?genreUri .
-            
+
             ?genreUri rdfs:label ?genre .
             FILTER(CONTAINS(LCASE(?genre), "漫画") || CONTAINS(LCASE(?genre), "マンガ") || CONTAINS(LCASE(?genre), "comic"))
-            
+
             OPTIONAL {{
                 ?work schema:publisher ?publisherUri .
                 ?publisherUri rdfs:label ?publisher .
             }}
-            
+
             OPTIONAL {{
                 ?work schema:datePublished ?publishedDate .
             }}
@@ -206,16 +205,16 @@ class MediaArtsSPARQLClient:
         query = f"""
         PREFIX schema: <http://schema.org/>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        
+
         SELECT DISTINCT ?magazine ?title ?publisher ?publisherName ?genre
         WHERE {{
             ?magazine a schema:Periodical ;
                       rdfs:label ?title ;
                       schema:genre ?genreUri .
-            
+
             ?genreUri rdfs:label ?genre .
             FILTER(CONTAINS(LCASE(?genre), "漫画") || CONTAINS(LCASE(?genre), "マンガ") || CONTAINS(LCASE(?genre), "comic"))
-            
+
             OPTIONAL {{
                 ?magazine schema:publisher ?publisher .
                 ?publisher rdfs:label ?publisherName .
@@ -260,7 +259,7 @@ class MediaArtsSPARQLClient:
         PREFIX schema: <http://schema.org/>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         PREFIX neptune-fts: <http://aws.amazon.com/neptune/vocab/v01/QueryLanguage#>
-        
+
         SELECT DISTINCT ?resource ?title ?type
         WHERE {{
             SERVICE neptune-fts:search {{
@@ -270,7 +269,7 @@ class MediaArtsSPARQLClient:
                 neptune-fts:config neptune-fts:limit {limit} .
                 ?resource neptune-fts:score ?score .
             }}
-            
+
             ?resource rdfs:label ?title .
             OPTIONAL {{ ?resource a ?type }}
         }}
@@ -320,34 +319,31 @@ class MediaArtsSPARQLClient:
         ref_start = min(ref_years) - 1  # 連載開始を単行本より1年前と推定
         ref_end = max(ref_years)
 
-        # 同じ出版社の作品を取得
-        publisher = ref_works[0].get("publisher", "集英社")
-
         # 集英社の作品を取得するクエリ
-        query = f"""
+        query = """
         PREFIX schema: <https://schema.org/>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         PREFIX madb: <https://mediaarts-db.artmuseums.go.jp/data/class#>
         PREFIX dcterms: <http://purl.org/dc/terms/>
-        
+
         SELECT DISTINCT ?work ?title ?creator ?creatorName ?genre ?publisher ?publishedDate
         WHERE {{
             ?work a madb:MangaBook .
             ?work schema:name ?title .
             ?work schema:publisher ?publisher .
             ?work schema:datePublished ?publishedDate .
-            
+
 <<<<<<< HEAD
             FILTER(CONTAINS(LCASE(?publisher), "集英社"))
-            
+
             OPTIONAL {{
                 ?work schema:creator ?creatorName .
             }}
-            
+
             OPTIONAL {{
                 ?work dcterms:creator ?creator .
             }}
-            
+
             OPTIONAL {{
                 ?work schema:genre ?genre .
             }}
@@ -432,16 +428,16 @@ class MediaArtsSPARQLClient:
             base = re.sub(pattern, "", base, flags=re.IGNORECASE)
 
         return base.strip()
-    
+
     def get_manga_works_by_magazine_period(self, magazine_name: str = None, year: str = None, limit: int = 50) -> List[Dict[str, Any]]:
         """
         同じ掲載誌・同じ時期の漫画作品を取得
-        
+
         Args:
             magazine_name: 雑誌名（部分一致）
             year: 出版年
             limit: 結果の上限
-            
+
         Returns:
             作品データのリスト
         """
@@ -455,7 +451,7 @@ class MediaArtsSPARQLClient:
             "SELECT DISTINCT ?work ?title ?creator ?creatorName ?magazine ?magazineName ?publishedDate ?publisher",
             "WHERE {"
         ]
-        
+
         # 作品の基本情報
         query_parts.extend([
             "    ?work a madb:MangaBook ;",
@@ -482,34 +478,34 @@ class MediaArtsSPARQLClient:
             "        ?work schema:publisher ?publisher .",
             "    }"
         ])
-        
+
         # フィルター条件
         filters = []
-        
+
         if magazine_name:
             filters.append(f'CONTAINS(LCASE(?magazineName), LCASE("{magazine_name}"))')
-        
+
         if year:
             filters.append(f'CONTAINS(?publishedDate, "{year}")')
-        
+
         if filters:
             query_parts.extend([
                 "",
                 "    FILTER(" + " && ".join(filters) + ")"
             ])
-        
+
         query_parts.extend([
             "}",
             "ORDER BY ?magazineName ?publishedDate ?title",
             f"LIMIT {limit}"
         ])
-        
+
         query = "\n".join(query_parts)
-        
+
         results = self.execute_query(query)
         if not results:
             return []
-        
+
         works = []
         for binding in results.get('results', {}).get('bindings', []):
             work_data = {
@@ -523,5 +519,5 @@ class MediaArtsSPARQLClient:
                 'publisher': binding.get('publisher', {}).get('value', '')
             }
             works.append(work_data)
-            
+
         return works

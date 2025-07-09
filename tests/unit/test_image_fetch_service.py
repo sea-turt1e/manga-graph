@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 import aiohttp
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 from domain.services.image_fetch_service import ImageFetchService, get_image_fetch_service
 
 

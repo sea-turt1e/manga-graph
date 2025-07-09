@@ -1,4 +1,3 @@
-import pytest
 from datetime import datetime
 from domain.entities.manga import Author, Magazine, Work, GraphNode, GraphEdge
 

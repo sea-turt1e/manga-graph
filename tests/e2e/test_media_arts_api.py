@@ -176,7 +176,7 @@ class TestMediaArtsAPI:
         # Should contain data from media arts database
         if data["nodes"]:
             # Check if any node has media_arts_db source
-            has_media_arts_data = any(
+            assert any(
                 node.get("properties", {}).get("source") == "media_arts_db"
                 for node in data["nodes"]
             )

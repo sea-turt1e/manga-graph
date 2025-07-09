@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import Mock, patch
 from domain.services.neo4j_media_arts_service import Neo4jMediaArtsService
 from domain.services.mock_neo4j_service import MockNeo4jService

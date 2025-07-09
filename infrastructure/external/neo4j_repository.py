@@ -13,8 +13,9 @@ from neo4j import GraphDatabase
 # Add scripts directory to path to import name_normalizer
 scripts_dir = Path(__file__).parent.parent.parent / "scripts" / "data_import"
 sys.path.append(str(scripts_dir))
+
 from name_normalizer import (
-    generate_normalized_id,
+    generate_normalized_id,  # noqa: E402
     normalize_and_split_creators,
     normalize_creator_name,
     normalize_publisher_name,

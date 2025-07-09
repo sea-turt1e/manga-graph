@@ -319,11 +319,8 @@ class MediaArtsSPARQLClient:
         ref_start = min(ref_years) - 1  # 連載開始を単行本より1年前と推定
         ref_end = max(ref_years)
 
-        # 同じ出版社の作品を取得
-        publisher = ref_works[0].get("publisher", "集英社")
-
         # 集英社の作品を取得するクエリ
-        query = f"""
+        query = """
         PREFIX schema: <https://schema.org/>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         PREFIX madb: <https://mediaarts-db.artmuseums.go.jp/data/class#>

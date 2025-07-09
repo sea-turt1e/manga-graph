@@ -2,7 +2,7 @@ import pytest
 import json
 import time
 from pathlib import Path
-from unittest.mock import Mock, patch, mock_open
+from unittest.mock import patch, mock_open
 from domain.services.cover_cache_service import CoverCacheService, get_cache_service
 
 
@@ -28,7 +28,7 @@ class TestCoverCacheService:
 
     def test_cache_directory_creation(self, tmp_path):
         non_existent_dir = tmp_path / "new_cache_dir"
-        service = CoverCacheService(cache_dir=str(non_existent_dir))
+        CoverCacheService(cache_dir=str(non_existent_dir))
         assert non_existent_dir.exists()
 
     def test_load_existing_cache(self, temp_cache_dir):
@@ -177,7 +177,7 @@ class TestCoverCacheService:
             "isbn1": {"cover_url": "url1", "timestamp": current_time - 7200},  # Expired
             "isbn2": {"cover_url": "url2", "timestamp": current_time},        # Valid with cover
             "isbn3": {"cover_url": None, "timestamp": current_time},          # Valid without cover
-            "isbn4": {"cover_url": "url4", "timestamp": current_time - 1800}, # Valid with cover
+            "isbn4": {"cover_url": "url4", "timestamp": current_time - 1800},  # Valid with cover
         }
 
         stats = cache_service.get_cache_stats()

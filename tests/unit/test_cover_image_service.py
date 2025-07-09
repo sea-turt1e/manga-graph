@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from domain.services.cover_image_service import CoverImageService, get_cover_service
 
 

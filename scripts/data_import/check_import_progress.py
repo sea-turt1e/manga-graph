@@ -69,9 +69,9 @@ class ImportProgressMonitor:
 
     def display_progress(self):
         """進行状況を表示"""
-        print(f"\n{'='*60}")
+        print("\n{'='*60}")
         print(f"インポート進行状況チェック - {datetime.now().strftime('%H:%M:%S')}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # プロセス状況チェック
         is_running, pids = self.check_import_process()

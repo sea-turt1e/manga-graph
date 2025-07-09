@@ -241,10 +241,14 @@ class Neo4jMangaRepository:
                     # シリーズ全体のfirst_publishedとlast_publishedを計算
                     all_first_dates = [w["first_published"] for w in group_data["works"] if w.get("first_published")]
                     all_last_dates = [w["last_published"] for w in group_data["works"] if w.get("last_published")]
-                    
-                    series_first_published = min(all_first_dates) if all_first_dates else first_volume_work.get("first_published")
-                    series_last_published = max(all_last_dates) if all_last_dates else first_volume_work.get("last_published")
-                    
+
+                    series_first_published = (
+                        min(all_first_dates) if all_first_dates else first_volume_work.get("first_published")
+                    )
+                    series_last_published = (
+                        max(all_last_dates) if all_last_dates else first_volume_work.get("last_published")
+                    )
+
                     series_work = {
                         "work_id": first_volume_work["work_id"],  # 第1巻のIDを使用
                         "title": base_title,  # 巻数を除去したタイトル
@@ -395,7 +399,24 @@ class Neo4jMangaRepository:
                        ELSE 0
                      END) / toFloat(end_year2 - start_year2 + 1)
                    ELSE 0.0
-                 END as overlap_ratio
+                 END as overlap_ratio,
+                 CASE
+                   WHEN (end_year1 - start_year1 + 1) + (end_year2 - start_year2 + 1) > 0 THEN
+                     toFloat(CASE
+                       WHEN start_year2 >= start_year1 AND end_year2 <= end_year1 THEN end_year2 - start_year2 + 1
+                       WHEN start_year1 >= start_year2 AND end_year1 <= end_year2 THEN end_year1 - start_year1 + 1
+                       WHEN start_year2 <= start_year1 AND end_year2 >= start_year1 THEN end_year2 - start_year1 + 1
+                       WHEN start_year1 <= start_year2 AND end_year1 >= start_year2 THEN end_year1 - start_year2 + 1
+                       ELSE 0
+                     END) / toFloat((end_year1 - start_year1 + 1) + (end_year2 - start_year2 + 1) - CASE
+                       WHEN start_year2 >= start_year1 AND end_year2 <= end_year1 THEN end_year2 - start_year2 + 1
+                       WHEN start_year1 >= start_year2 AND end_year1 <= end_year2 THEN end_year1 - start_year1 + 1
+                       WHEN start_year2 <= start_year1 AND end_year2 >= start_year1 THEN end_year2 - start_year1 + 1
+                       WHEN start_year1 <= start_year2 AND end_year1 >= start_year2 THEN end_year1 - start_year2 + 1
+                       ELSE 0
+                     END)
+                   ELSE 0.0
+                 END as jaccard_similarity
             WHERE overlap_years > 0
             OPTIONAL MATCH (w2)-[:CREATED_BY]->(a:Author)
             OPTIONAL MATCH (m)-[:PUBLISHED_BY]->(p:Publisher)
@@ -404,10 +425,10 @@ class Neo4jMangaRepository:
                    collect(DISTINCT a.name) as creators,
                    m.title as magazine_name,
                    p.name as publisher_name,
-                   overlap_years, overlap_ratio,
+                   overlap_years, overlap_ratio, jaccard_similarity,
                    start_year2 as start_year, end_year2 as end_year,
-                   toInteger(1000 + (overlap_years * 10) + (overlap_ratio * 100)) as relevance_score
-            ORDER BY relevance_score DESC, overlap_years DESC, start_year2 ASC
+                   toInteger(1000 + (jaccard_similarity * 1000)) as relevance_score
+            ORDER BY relevance_score DESC, jaccard_similarity DESC, overlap_years DESC, start_year2 ASC
             LIMIT $limit
             """
 
@@ -415,7 +436,9 @@ class Neo4jMangaRepository:
             results = [dict(record) for record in result]
             logger.info(f"Query returned {len(results)} results")
             for idx, r in enumerate(results[:5]):  # Log first 5 results
-                logger.info(f"Result {idx}: {r['title']} (overlap: {r['overlap_years']} years, ratio: {r.get('overlap_ratio', 0):.2f}, score: {r['relevance_score']})")
+                logger.info(
+                    f"Result {idx}: {r['title']} (overlap: {r['overlap_years']} years, ratio: {r.get('overlap_ratio', 0):.2f}, jaccard: {r.get('jaccard_similarity', 0):.3f}, score: {r['relevance_score']})"
+                )
             return results
 
     def search_manga_publications(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
@@ -655,7 +678,9 @@ class Neo4jMangaRepository:
 
             main_work_id = main_work["work_id"]
             logger.info(f"Selected main work for related search: {main_work['title']} (ID: {main_work_id})")
-            logger.info(f"Main work details - first_published: {main_work.get('first_published')}, last_published: {main_work.get('last_published')}")
+            logger.info(
+                f"Main work details - first_published: {main_work.get('first_published')}, last_published: {main_work.get('last_published')}"
+            )
             logger.info(f"Main work magazines: {main_work.get('magazines', [])}")
 
             # Add works by same author
@@ -667,7 +692,7 @@ class Neo4jMangaRepository:
                         "label": related["title"],
                         "type": "work",
                         "properties": {**related, "source": "neo4j"},
-                        "relevance_score": related.get("relevance_score", 500)
+                        "relevance_score": related.get("relevance_score", 500),
                     }
                     nodes.append(related_node)
                     node_ids_seen.add(related["work_id"])
@@ -692,10 +717,12 @@ class Neo4jMangaRepository:
             logger.info(f"Getting magazine period related works for: {main_work_id}")
             magazine_period_related = self.get_related_works_by_magazine_and_period(main_work_id, 2, 50)
             logger.info(f"Found {len(magazine_period_related)} magazine period related works")
-            
+
             for idx, related in enumerate(magazine_period_related):
-                logger.info(f"Magazine related work {idx}: {related['title']} (overlap: {related.get('overlap_years', 0)} years)")
-                
+                logger.info(
+                    f"Magazine related work {idx}: {related['title']} (overlap: {related.get('overlap_years', 0)} years)"
+                )
+
             for related in magazine_period_related:
                 if related["work_id"] not in node_ids_seen:
                     related_node = {
@@ -703,7 +730,7 @@ class Neo4jMangaRepository:
                         "label": related["title"],
                         "type": "work",
                         "properties": {**related, "source": "neo4j"},
-                        "relevance_score": related.get("relevance_score", 1000)
+                        "relevance_score": related.get("relevance_score", 1000),
                     }
                     nodes.append(related_node)
                     node_ids_seen.add(related["work_id"])
@@ -820,7 +847,7 @@ class Neo4jMangaRepository:
                         "label": related["title"],
                         "type": "work",
                         "properties": {**related, "source": "neo4j"},
-                        "relevance_score": related.get("relevance_score", 100)
+                        "relevance_score": related.get("relevance_score", 100),
                     }
                     nodes.append(related_node)
                     node_ids_seen.add(related["work_id"])
@@ -873,7 +900,9 @@ class Neo4jMangaRepository:
                     current_score = node.get("relevance_score", 0)
 
                     # Prefer node with higher relevance_score, or more data if scores are equal
-                    if current_score > existing_score or (current_score == existing_score and current_data_count > existing_data_count):
+                    if current_score > existing_score or (
+                        current_score == existing_score and current_data_count > existing_data_count
+                    ):
                         # Replace with current node (has higher score or more data)
                         unique_nodes = [n for n in unique_nodes if n["label"] != title or n["type"] != "work"]
                         unique_nodes.append(node)
@@ -947,27 +976,24 @@ class Neo4jMangaRepository:
         work_nodes = []
         other_nodes = []
         main_work_nodes = []
-        
+
         for node in unique_nodes:
             if node["type"] == "work":
                 # Check if this is one of the main search results
-                is_main_result = any(
-                    node["id"] == work["work_id"] 
-                    for work in main_works
-                )
+                is_main_result = any(node["id"] == work["work_id"] for work in main_works)
                 if is_main_result:
                     main_work_nodes.append(node)
                 else:
                     work_nodes.append(node)
             else:
                 other_nodes.append(node)
-        
+
         # Sort related work nodes by relevance_score in descending order
         work_nodes.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
-        
+
         # Combine: main results first, then sorted related works, then other nodes
         unique_nodes = main_work_nodes + work_nodes + other_nodes
-        
+
         logger.info(
             f"After deduplication: {len(unique_nodes)} nodes and {len(unique_edges)} edges for search term: '{search_term}'"
         )

@@ -2,7 +2,6 @@ import asyncio
 import aiohttp
 from typing import List, Dict, Any, Optional
 import logging
-from io import BytesIO
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +26,11 @@ class ImageFetchService:
 
     async def _fetch_single_image(self, work_id: str, cover_url: str) -> Dict[str, Any]:
         """Fetch a single image from URL
-        
+
         Args:
             work_id: Work identifier
             cover_url: URL to fetch image from
-            
+
         Returns:
             Dict containing result data
         """
@@ -43,7 +42,7 @@ class ImageFetchService:
                 if response.status == 200:
                     content_type = response.headers.get('Content-Type', 'image/jpeg')
                     image_data = await response.read()
-                    
+
                     return {
                         'work_id': work_id,
                         'image_data': image_data,
@@ -86,10 +85,10 @@ class ImageFetchService:
 
     async def fetch_images(self, requests: List[Dict[str, str]]) -> List[Dict[str, Any]]:
         """Fetch multiple images concurrently
-        
+
         Args:
             requests: List of dicts with 'work_id' and 'cover_url' keys
-            
+
         Returns:
             List of result dicts
         """
@@ -132,11 +131,11 @@ class ImageFetchService:
 
     async def fetch_single_image(self, work_id: str, cover_url: str) -> Dict[str, Any]:
         """Fetch a single image (convenience method)
-        
+
         Args:
             work_id: Work identifier
             cover_url: URL to fetch image from
-            
+
         Returns:
             Result dict
         """

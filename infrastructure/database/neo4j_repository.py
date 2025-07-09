@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 from neo4j import GraphDatabase
 import logging
 from domain.entities import Work, Author, Magazine
@@ -35,7 +35,7 @@ class Neo4jMangaRepository(MangaRepository):
         def test_tx(tx):
             result = tx.run("RETURN 1 as test")
             return result.single()["test"]
-        
+
         with self.driver.session() as session:
             return session.execute_read(test_tx) == 1
 
@@ -58,28 +58,28 @@ class Neo4jMangaRepository(MangaRepository):
             # First get matching nodes
             node_query = """
             MATCH (n)
-            WHERE toLower(n.title) CONTAINS toLower($term) 
+            WHERE toLower(n.title) CONTAINS toLower($term)
                OR toLower(n.name) CONTAINS toLower($term)
             RETURN n
             LIMIT 10
             """
-            
+
             node_result = tx.run(node_query, term=search_term)
             found_nodes = []
             nodes = {}
-            
+
             for record in node_result:
                 node = record["n"]
                 node_id = str(node.element_id)
                 found_nodes.append(node_id)
-                
+
                 nodes[node_id] = {
                     "id": node_id,
                     "label": node.get("title", node.get("name", "Unknown")),
                     "type": list(node.labels)[0].lower() if node.labels else "unknown",
                     "properties": self._serialize_properties(dict(node))
                 }
-            
+
             # Get relationships for found nodes
             edges = []
             if found_nodes:
@@ -89,17 +89,17 @@ class Neo4jMangaRepository(MangaRepository):
                 RETURN n, r, connected
                 LIMIT 50
                 """
-                
+
                 rel_result = tx.run(rel_query, nodeIds=found_nodes)
-                
+
                 for record in rel_result:
                     source_node = record["n"]
                     relationship = record["r"]
                     target_node = record["connected"]
-                    
+
                     source_id = str(source_node.element_id)
                     target_id = str(target_node.element_id)
-                    
+
                     # Add target node if not already present
                     if target_id not in nodes:
                         nodes[target_id] = {
@@ -108,7 +108,7 @@ class Neo4jMangaRepository(MangaRepository):
                             "type": list(target_node.labels)[0].lower() if target_node.labels else "unknown",
                             "properties": self._serialize_properties(dict(target_node))
                         }
-                    
+
                     # Add edge
                     edge_id = f"{source_id}-{relationship.type}-{target_id}"
                     edge = {
@@ -119,12 +119,12 @@ class Neo4jMangaRepository(MangaRepository):
                         "properties": self._serialize_properties(dict(relationship))
                     }
                     edges.append(edge)
-            
+
             return {
                 "nodes": list(nodes.values()),
                 "edges": edges
             }
-        
+
         with self.driver.session() as session:
             return session.execute_read(search_tx)
 
@@ -143,7 +143,7 @@ class Neo4jMangaRepository(MangaRepository):
                 )
                 authors.append(author)
             return authors
-        
+
         with self.driver.session() as session:
             return session.execute_read(authors_tx)
 
@@ -165,7 +165,7 @@ class Neo4jMangaRepository(MangaRepository):
                 )
                 works.append(work)
             return works
-        
+
         with self.driver.session() as session:
             return session.execute_read(works_tx)
 
@@ -184,7 +184,7 @@ class Neo4jMangaRepository(MangaRepository):
                 )
                 magazines.append(magazine)
             return magazines
-        
+
         with self.driver.session() as session:
             return session.execute_read(magazines_tx)
 

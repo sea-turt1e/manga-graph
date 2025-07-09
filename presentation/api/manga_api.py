@@ -16,12 +16,10 @@ from presentation.schemas import (
     BulkImageFetchRequest,
     BulkImageFetchResponse,
     CoverResponse,
-    EdgeData,
     GraphResponse,
     ImageFetchRequest,
     ImageFetchResponse,
     MagazineResponse,
-    NodeData,
     SearchRequest,
     WorkResponse,
 )
@@ -660,7 +658,7 @@ async def fetch_single_image(
     try:
         async with image_service:
             result = await image_service.fetch_single_image(request.work_id, request.cover_url)
-            
+
             return ImageFetchResponse.from_bytes(
                 work_id=result['work_id'],
                 image_data=result['image_data'],
@@ -684,14 +682,14 @@ async def fetch_bulk_images(
             {"work_id": req.work_id, "cover_url": req.cover_url}
             for req in request.requests
         ]
-        
+
         async with image_service:
             results = await image_service.fetch_images(fetch_requests)
-            
+
             # Convert results to response format
             response_results = []
             success_count = 0
-            
+
             for result in results:
                 image_response = ImageFetchResponse.from_bytes(
                     work_id=result['work_id'],
@@ -701,10 +699,10 @@ async def fetch_bulk_images(
                     error=result['error']
                 )
                 response_results.append(image_response)
-                
+
                 if result['success']:
                     success_count += 1
-            
+
             return BulkImageFetchResponse(
                 results=response_results,
                 total_processed=len(results),

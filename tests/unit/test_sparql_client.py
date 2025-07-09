@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import Mock, patch
 from infrastructure.external import MediaArtsSPARQLClient
 
@@ -12,7 +11,7 @@ class TestMediaArtsSPARQLClient:
         # Arrange
         mock_sparql = Mock()
         mock_sparql_wrapper.return_value = mock_sparql
-        
+
         expected_result = {
             'results': {
                 'bindings': [
@@ -21,7 +20,7 @@ class TestMediaArtsSPARQLClient:
             }
         }
         mock_sparql.queryAndConvert.return_value = expected_result
-        
+
         client = MediaArtsSPARQLClient()
         query = "SELECT ?title WHERE { ?work rdfs:label ?title }"
 
@@ -39,7 +38,7 @@ class TestMediaArtsSPARQLClient:
         mock_sparql = Mock()
         mock_sparql_wrapper.return_value = mock_sparql
         mock_sparql.queryAndConvert.side_effect = Exception("timeout")
-        
+
         client = MediaArtsSPARQLClient()
         query = "SELECT ?title WHERE { ?work rdfs:label ?title }"
 
@@ -178,7 +177,7 @@ class TestMediaArtsSPARQLClient:
         # より詳細なクエリのテストが必要な場合に使用できます
         search_term = "ONE PIECE"
         limit = 20
-        
+
         # クエリに必要な要素が含まれているかチェック
         # 実際の実装では、クエリ文字列を検証するメソッドを追加することも可能
         assert search_term is not None
@@ -192,6 +191,6 @@ class TestMediaArtsSPARQLClient:
         # エンドポイントURLが正しく設定されているかテスト
         default_client = MediaArtsSPARQLClient()
         assert default_client.endpoint_url == "https://sparql.cineii.jbf.ne.jp/sparql"
-        
+
         custom_client = MediaArtsSPARQLClient("http://custom.endpoint")
         assert custom_client.endpoint_url == "http://custom.endpoint"

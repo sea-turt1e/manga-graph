@@ -214,10 +214,10 @@ class Neo4jMediaArtsService:
             if node["type"] == "work":
                 is_series = node_data.get("is_series", False)
                 volume = node_data.get("volume", "")
-                
+
                 # Log for debugging
                 logger.debug(f"Converting work node: {node['label']}, is_series: {is_series}, original volume: {volume}")
-                
+
                 properties.update(
                     {
                         "title": node_data.get("title", node["label"]),
@@ -273,7 +273,7 @@ class Neo4jMediaArtsService:
             source = edge.get("source", edge.get("from"))
             target = edge.get("target", edge.get("to"))
             edge_id = edge.get("id", f"{source}-{edge['type']}-{target}")
-            
+
             converted_edge = {
                 "id": edge_id,
                 "source": source,

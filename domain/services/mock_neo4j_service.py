@@ -10,13 +10,13 @@ logger = logging.getLogger(__name__)
 
 class MockNeo4jService:
     """Mock service that returns sample data when Neo4j is not available"""
-    
+
     def search_manga_data_with_related(
         self, search_term: str, limit: int = 20, include_related: bool = True
     ) -> Dict[str, List]:
         """Return mock manga data for testing"""
         logger.info(f"MockNeo4jService: Returning mock data for search term: '{search_term}'")
-        
+
         # Mock data for "ONE" search
         if search_term.lower() == "one":
             nodes = [
@@ -61,7 +61,7 @@ class MockNeo4jService:
                     }
                 }
             ]
-            
+
             edges = [
                 {
                     "id": "author_one-created-work_one_punch_man",
@@ -85,7 +85,7 @@ class MockNeo4jService:
                     "properties": {"source": "mock"}
                 }
             ]
-            
+
             if include_related:
                 # Add related work
                 nodes.extend([
@@ -112,7 +112,7 @@ class MockNeo4jService:
                         }
                     }
                 ])
-                
+
                 edges.extend([
                     {
                         "id": "author_one-created-work_mob_psycho",
@@ -129,16 +129,16 @@ class MockNeo4jService:
                         "properties": {"source": "mock"}
                     }
                 ])
-            
+
             return {"nodes": nodes, "edges": edges}
-        
+
         # Default empty response for other searches
         return {"nodes": [], "edges": []}
-    
+
     def get_creator_works(self, creator_name: str, limit: int = 50) -> Dict[str, List]:
         """Return mock creator works"""
         return {"nodes": [], "edges": []}
-    
+
     def get_database_statistics(self) -> Dict[str, int]:
         """Return mock database statistics"""
         return {
@@ -149,11 +149,11 @@ class MockNeo4jService:
             "created_relationships": 0,
             "published_relationships": 0
         }
-    
+
     def get_work_by_id(self, work_id: str) -> Optional[Dict[str, Any]]:
         """Return mock work data by ID"""
         logger.info(f"MockNeo4jService: Getting work by ID: {work_id}")
-        
+
         # Mock data for specific works that were updated in bulk update
         mock_works = {
             "https://mediaarts-db.artmuseums.go.jp/id/M1032568": {
@@ -217,20 +217,20 @@ class MockNeo4jService:
                 "authors": ["あさりよしとお"]
             }
         }
-        
+
         return mock_works.get(work_id)
-    
+
     def update_work_cover_image(self, work_id: str, cover_url: str) -> bool:
         """Mock update work cover image"""
         logger.info(f"MockNeo4jService: Updating cover for {work_id}: {cover_url}")
         # In real implementation, this would update the database
         # For mock, we just return True
         return True
-    
+
     def get_works_needing_covers(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Return mock works that need covers"""
         logger.info(f"MockNeo4jService: Getting works needing covers, limit: {limit}")
-        
+
         # Return some mock works without covers
         mock_works = [
             {
@@ -264,9 +264,9 @@ class MockNeo4jService:
                 "isbn": "9784785977344"
             }
         ]
-        
+
         return mock_works[:limit]
-    
+
     def close(self):
         """Mock close method"""
         pass

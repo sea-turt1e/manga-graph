@@ -1,8 +1,6 @@
 import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
-from domain.entities import Author, GraphEdge, GraphNode, Magazine, Work
 from infrastructure.external import MediaArtsSPARQLClient
 
 logger = logging.getLogger(__name__)
@@ -287,38 +285,38 @@ class MediaArtsDataService:
         try:
             # まず基本検索を実行
             base_result = self.search_manga_data(search_term, limit)
-            
+
             if not include_related:
                 return base_result
-            
+
             nodes = base_result["nodes"]
             edges = base_result["edges"]
             processed_uris = set()
             processed_publishers = set()
             processed_years = set()
-            
+
             # 既存のノードのURIを記録
             for node in nodes:
                 processed_uris.add(node["id"])
                 if node["type"] == "work":
                     publisher = node["properties"].get("publisher", "")
                     published_date = node["properties"].get("published_date", "")
-                    
+
                     if publisher:
                         processed_publishers.add(publisher)
-                    
+
                     if published_date:
                         year = published_date[:4] if len(published_date) >= 4 else None
                         if year and year.isdigit():
                             processed_years.add(year)
-            
+
             # 重複期間が長い関連作品を優先的に取得
             try:
                 overlap_works = self.sparql_client.get_related_works_by_overlap_period(search_term, 15)
                 self._add_related_works_to_graph(overlap_works, nodes, edges, processed_uris, "overlap_period")
             except Exception as e:
                 logger.warning(f"Error getting related works by overlap period: {e}")
-            
+
             # 重複期間が検出できない場合は、基本の関連作品検索をフォールバック
             if len(nodes) <= 2:  # 基本検索結果のみの場合
                 try:
@@ -330,17 +328,17 @@ class MediaArtsDataService:
                             self._add_related_works_to_graph(related_results, nodes, edges, processed_uris, "same_publisher")
                 except Exception as e:
                     logger.warning(f"Error getting famous works: {e}")
-            
+
             return {"nodes": nodes, "edges": edges}
-            
+
         except Exception as e:
             logger.error(f"Error searching manga data with related: {e}")
             return {"nodes": [], "edges": []}
-    
+
     def _add_related_works_to_graph(self, works_data: List[Dict], nodes: List, edges: List, processed_uris: set, relation_type: str):
         """
         関連作品をグラフに追加するヘルパーメソッド
-        
+
         Args:
             works_data: 作品データのリスト
             nodes: ノードリスト（参照渡し）
@@ -349,13 +347,13 @@ class MediaArtsDataService:
             relation_type: 関係タイプ
         """
         publisher_nodes = {}  # 出版社ノードを記録
-        
+
         for work_data in works_data:
             work_uri = work_data.get("uri", "")
             creator_uri = work_data.get("creator_uri", "")
             title = work_data.get("title", "").strip()
             publisher = work_data.get("publisher", "").strip()
-            
+
             # 作品ノードを追加（未処理の場合のみ）
             if work_uri and work_uri not in processed_uris:
                 work_node = {
@@ -372,7 +370,7 @@ class MediaArtsDataService:
                 }
                 nodes.append(work_node)
                 processed_uris.add(work_uri)
-            
+
             # 作者ノードを追加（未処理の場合のみ）
             if creator_uri and creator_uri not in processed_uris:
                 creator_node = {
@@ -383,7 +381,7 @@ class MediaArtsDataService:
                 }
                 nodes.append(creator_node)
                 processed_uris.add(creator_uri)
-            
+
             # 出版社ノードを作成（まだない場合）
             if publisher and relation_type == "published_by":
                 publisher_id = f"publisher_{hash(publisher)}"
@@ -397,7 +395,7 @@ class MediaArtsDataService:
                     nodes.append(publisher_node)
                     processed_uris.add(publisher_id)
                     publisher_nodes[publisher_id] = publisher_node
-                
+
                 # 出版社と作品の関係を追加
                 if work_uri:
                     edge = {
@@ -408,7 +406,7 @@ class MediaArtsDataService:
                         "properties": {"source": "media_arts_db"},
                     }
                     edges.append(edge)
-            
+
             # 作者と作品の関係を追加
             if work_uri and creator_uri:
                 edge = {
@@ -419,16 +417,16 @@ class MediaArtsDataService:
                     "properties": {"source": "media_arts_db"},
                 }
                 edges.append(edge)
-    
+
     def get_magazine_relationships(self, magazine_name: str = None, year: str = None, limit: int = 50) -> Dict[str, List]:
         """
         同じ掲載誌・同じ時期の漫画関係を取得してグラフ形式で返す
-        
+
         Args:
             magazine_name: 雑誌名（部分一致）
             year: 出版年
             limit: 結果の上限
-            
+
         Returns:
             ノードとエッジのリストを含む辞書
         """
@@ -436,19 +434,19 @@ class MediaArtsDataService:
             works_data = self.sparql_client.get_manga_works_by_magazine_period(
                 magazine_name=magazine_name, year=year, limit=limit
             )
-            
+
             nodes = []
             edges = []
             processed_uris = set()
-            
+
             # 雑誌ノードと作品ノードを作成
             magazines = {}  # 雑誌URI -> 雑誌ノード
-            
+
             for work_data in works_data:
                 work_uri = work_data.get('uri', '')
                 creator_uri = work_data.get('creator_uri', '')
                 magazine_uri = work_data.get('magazine_uri', '')
-                
+
                 # 作品ノードを追加
                 if work_uri and work_uri not in processed_uris:
                     work_node = {
@@ -464,7 +462,7 @@ class MediaArtsDataService:
                     }
                     nodes.append(work_node)
                     processed_uris.add(work_uri)
-                
+
                 # 作者ノードを追加
                 if creator_uri and creator_uri not in processed_uris:
                     creator_node = {
@@ -478,7 +476,7 @@ class MediaArtsDataService:
                     }
                     nodes.append(creator_node)
                     processed_uris.add(creator_uri)
-                
+
                 # 雑誌ノードを追加
                 if magazine_uri and magazine_uri not in magazines:
                     magazine_node = {
@@ -493,7 +491,7 @@ class MediaArtsDataService:
                     nodes.append(magazine_node)
                     magazines[magazine_uri] = magazine_node
                     processed_uris.add(magazine_uri)
-                
+
                 # 作者と作品の関係
                 if creator_uri and work_uri:
                     edges.append({
@@ -503,7 +501,7 @@ class MediaArtsDataService:
                         'type': 'created',
                         'properties': {'source': 'media_arts_db'}
                     })
-                
+
                 # 雑誌と作品の関係
                 if magazine_uri and work_uri:
                     edges.append({
@@ -513,9 +511,9 @@ class MediaArtsDataService:
                         'type': 'published',
                         'properties': {'source': 'media_arts_db'}
                     })
-            
+
             return {'nodes': nodes, 'edges': edges}
-            
+
         except Exception as e:
             logger.error(f"Error getting magazine relationships: {e}")
             return {'nodes': [], 'edges': []}

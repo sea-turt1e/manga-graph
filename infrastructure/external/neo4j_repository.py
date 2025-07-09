@@ -359,7 +359,7 @@ class Neo4jMangaRepository:
             # 同じ雑誌で連載期間が重複する作品を取得
             query = """
             MATCH (w1:Work {id: $work_id})-[:PUBLISHED_IN]->(m:Magazine)
-            WITH w1, m, 
+            WITH w1, m,
                  toInteger(coalesce(substring(w1.first_published, 0, 4), substring(w1.last_published, 0, 4), "1900")) as start_year1,
                  toInteger(coalesce(substring(w1.last_published, 0, 4), substring(w1.first_published, 0, 4), "2100")) as end_year1
             MATCH (w2:Work)-[:PUBLISHED_IN]->(m)
@@ -369,7 +369,7 @@ class Neo4jMangaRepository:
                  toInteger(coalesce(substring(w2.last_published, 0, 4), substring(w2.first_published, 0, 4), "2100")) as end_year2
             WHERE start_year2 <= end_year1 AND end_year2 >= start_year1
             WITH w2, m, start_year1, end_year1, start_year2, end_year2,
-                 CASE 
+                 CASE
                    WHEN start_year2 >= start_year1 AND end_year2 <= end_year1 THEN end_year2 - start_year2 + 1
                    WHEN start_year1 >= start_year2 AND end_year1 <= end_year2 THEN end_year1 - start_year1 + 1
                    WHEN start_year2 <= start_year1 AND end_year2 >= start_year1 THEN end_year2 - start_year1 + 1
@@ -379,7 +379,7 @@ class Neo4jMangaRepository:
             WHERE overlap_years > 0
             OPTIONAL MATCH (w2)-[:CREATED_BY]->(a:Author)
             OPTIONAL MATCH (m)-[:PUBLISHED_BY]->(p:Publisher)
-            RETURN w2.id as work_id, w2.title as title, 
+            RETURN w2.id as work_id, w2.title as title,
                    w2.first_published as first_published, w2.last_published as last_published,
                    collect(DISTINCT a.name) as creators,
                    m.title as magazine_name,
@@ -941,7 +941,7 @@ class Neo4jMangaRepository:
             MATCH (w:Work {id: $work_id})
             OPTIONAL MATCH (w)-[:CREATED_BY]->(a:Author)
             OPTIONAL MATCH (w)-[:PUBLISHED_IN]->(m:Magazine)-[:PUBLISHED_BY]->(p:Publisher)
-            RETURN w, 
+            RETURN w,
                    collect(DISTINCT a.name) as authors,
                    collect(DISTINCT p.name) as publishers
             """
@@ -987,7 +987,7 @@ class Neo4jMangaRepository:
         with self.driver.session() as session:
             query = """
             MATCH (w:Work)
-            WHERE w.isbn IS NOT NULL 
+            WHERE w.isbn IS NOT NULL
               AND w.isbn <> ''
               AND (w.cover_image_url IS NULL OR w.cover_image_url = '')
             RETURN w.id as id, w.title as title, w.isbn as isbn

@@ -2,13 +2,11 @@
 """
 メディア芸術データベースから漫画関連データをダウンロードするスクリプト
 """
-import json
 import logging
-import os
 import sys
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import requests
 
@@ -21,10 +19,16 @@ DATA_DIR = Path(__file__).parent.parent.parent / "data" / "mediaarts"
 
 # ダウンロードする漫画関連データ
 MANGA_DATASETS = [
-    "metadata101_json.zip",  # マンガ単行本
-    "metadata104_json.zip",  # マンガ単行本シリーズ
-    "metadata105_json.zip",  # マンガ雑誌
-    "metadata107_json.zip",  # マンガ作品
+    "metadata101_json.zip",
+    "metadata102_json.zip",
+    "metadata103_json.zip",
+    "metadata104_json.zip",
+    "metadata105_json.zip",
+    "metadata106_json.zip",
+    "metadata108_json.zip",
+    "metadata108-2_json.zip",
+    "metadata109_json.zip",
+    "metadata109-2_json.zip",
 ]
 
 

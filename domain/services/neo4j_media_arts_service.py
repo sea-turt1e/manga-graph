@@ -216,7 +216,9 @@ class Neo4jMediaArtsService:
                 volume = node_data.get("volume", "")
 
                 # Log for debugging
-                logger.debug(f"Converting work node: {node['label']}, is_series: {is_series}, original volume: {volume}")
+                logger.debug(
+                    f"Converting work node: {node['label']}, is_series: {is_series}, original volume: {volume}"
+                )
 
                 properties.update(
                     {
@@ -238,7 +240,8 @@ class Neo4jMediaArtsService:
                 # Publishers and creators
                 if node_data.get("publishers"):
                     # Normalize publisher names to handle parenthetical annotations
-                    from scripts.data_import.name_normalizer import normalize_publisher_name
+                    from domain.services.name_normalizer import normalize_publisher_name
+
                     normalized_publishers = []
                     for publisher in node_data["publishers"]:
                         normalized = normalize_publisher_name(publisher)
@@ -255,13 +258,15 @@ class Neo4jMediaArtsService:
             elif node["type"] == "magazine":
                 properties["name"] = node["label"]
             elif node["type"] == "publication":
-                properties.update({
-                    "title": node_data.get("title", node["label"]),
-                    "publication_date": node_data.get("publication_date", ""),
-                    "genre": node_data.get("genre", ""),
-                    "creators": node_data.get("creators", []),
-                    "magazines": node_data.get("magazines", [])
-                })
+                properties.update(
+                    {
+                        "title": node_data.get("title", node["label"]),
+                        "publication_date": node_data.get("publication_date", ""),
+                        "genre": node_data.get("genre", ""),
+                        "creators": node_data.get("creators", []),
+                        "magazines": node_data.get("magazines", []),
+                    }
+                )
 
             converted_node = {"id": node["id"], "label": node["label"], "type": node["type"], "properties": properties}
 

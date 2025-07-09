@@ -4,18 +4,12 @@ Neo4j database repository for manga graph data
 
 import logging
 import os
-import sys
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from neo4j import GraphDatabase
 
-# Add scripts directory to path to import name_normalizer
-scripts_dir = Path(__file__).parent.parent.parent / "scripts" / "data_import"
-sys.path.append(str(scripts_dir))
-
-from name_normalizer import (
-    generate_normalized_id,  # noqa: E402
+from domain.services.name_normalizer import (
+    generate_normalized_id,
     normalize_and_split_creators,
     normalize_creator_name,
     normalize_publisher_name,
@@ -234,7 +228,8 @@ class Neo4jMangaRepository:
                     if not first_volume_work:
                         first_volume_work = sorted_works[0]
                         logger.debug(
-                            f"Volume 1 not found, using first sorted work: {first_volume_work['title']} (ID: {first_volume_work['work_id']}, volume: {first_volume_work.get('volume', 'N/A')})"
+                            f"Volume 1 not found, using first sorted work: {first_volume_work['title']} "
+                            f"(ID: {first_volume_work['work_id']}, volume: {first_volume_work.get('volume', 'N/A')})"
                         )
 
                     # タイトルから巻数表記を除去

@@ -1,0 +1,1 @@
+exec(open('/Users/yamadahikaru/project/manga-graph/scripts/analyze_manga_entries.py').read())

@@ -201,6 +201,7 @@ data/mediaarts/
 *.zip
 *.json
 !data/mediaarts/.gitkeep
+!scripts/data_import/brand_to_magazine.json
 
 # Cache directories
 cache/

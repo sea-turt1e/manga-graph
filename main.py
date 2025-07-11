@@ -1,8 +1,11 @@
+import os
+
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from neo4j import GraphDatabase
 
-from presentation.api import manga_router, media_arts_router, neo4j_router, cover_router, image_router
+from presentation.api import cover_router, image_router, manga_router, media_arts_router, neo4j_router
 
 load_dotenv()
 
@@ -10,10 +13,23 @@ app = FastAPI(title="Manga Graph API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        os.getenv("LOCALHOST_URL", "http://localhost:3000"),
+        os.getenv("PRODUCTION_URL"),
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+
+NEO4J_URI = os.getenv("NEO4J_URI")
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
+
+driver = GraphDatabase.driver(
+    NEO4J_URI,
+    auth=(NEO4J_USER, NEO4J_PASSWORD),
 )
 
 # Include routers
@@ -31,8 +47,12 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "database": "mock"}
+    # Check if the Neo4j driver can connect to the database
+    try:
+        driver.verify_connectivity()
+        return {"status": "healthy", "database": "connected"}
+    except Exception as e:
+        return {"status": "unhealthy", "error": str(e)}
 
 
 if __name__ == "__main__":

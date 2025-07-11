@@ -521,34 +521,38 @@ class Neo4jMangaRepository:
                 nodes.append(node)
                 node_ids_seen.add(publication["publication_id"])
 
-            # Add authors and magazines for publications
+            # Add authors and magazines for publications - collect all creators first
+            all_creators_for_publication = []
             for creator in publication["creators"]:
                 if creator:
                     normalized_creators = normalize_and_split_creators(creator)
-                    for normalized_creator in normalized_creators:
-                        if normalized_creator:
-                            author_id = generate_normalized_id(normalized_creator, "author")
-                            if author_id not in node_ids_seen:
-                                author_node = {
-                                    "id": author_id,
-                                    "label": normalized_creator,
-                                    "type": "author",
-                                    "properties": {"source": "neo4j", "name": normalized_creator},
-                                }
-                                nodes.append(author_node)
-                                node_ids_seen.add(author_id)
+                    all_creators_for_publication.extend(normalized_creators)
+            
+            # Create individual author nodes for each creator
+            for normalized_creator in all_creators_for_publication:
+                if normalized_creator:
+                    author_id = generate_normalized_id(normalized_creator, "author")
+                    if author_id not in node_ids_seen:
+                        author_node = {
+                            "id": author_id,
+                            "label": normalized_creator,
+                            "type": "author",
+                            "properties": {"source": "neo4j", "name": normalized_creator},
+                        }
+                        nodes.append(author_node)
+                        node_ids_seen.add(author_id)
 
-                            edge_id = f"{author_id}-created-{publication['publication_id']}"
-                            if edge_id not in edge_ids_seen:
-                                edge = {
-                                    "id": edge_id,
-                                    "source": author_id,
-                                    "target": publication["publication_id"],
-                                    "type": "created",
-                                    "properties": {"source": "neo4j"},
-                                }
-                                edges.append(edge)
-                                edge_ids_seen.add(edge_id)
+                    edge_id = f"{author_id}-created-{publication['publication_id']}"
+                    if edge_id not in edge_ids_seen:
+                        edge = {
+                            "id": edge_id,
+                            "source": author_id,
+                            "target": publication["publication_id"],
+                            "type": "created",
+                            "properties": {"source": "neo4j"},
+                        }
+                        edges.append(edge)
+                        edge_ids_seen.add(edge_id)
 
             # Add magazines for publications
             for magazine in publication["magazines"]:
@@ -579,34 +583,39 @@ class Neo4jMangaRepository:
         # Process main works
         for work in main_works:
             # Add authors as nodes and create edges
+            # First, collect all creators from the work's creators array
+            all_creators_for_work = []
             for creator in work["creators"]:
                 if creator:
                     # Split multiple creators and normalize each one
                     normalized_creators = normalize_and_split_creators(creator)
-                    for normalized_creator in normalized_creators:
-                        if normalized_creator:
-                            author_id = generate_normalized_id(normalized_creator, "author")
-                            if author_id not in node_ids_seen:
-                                author_node = {
-                                    "id": author_id,
-                                    "label": normalized_creator,
-                                    "type": "author",
-                                    "properties": {"source": "neo4j", "name": normalized_creator},
-                                }
-                                nodes.append(author_node)
-                                node_ids_seen.add(author_id)
+                    all_creators_for_work.extend(normalized_creators)
+            
+            # Create individual author nodes for each creator
+            for normalized_creator in all_creators_for_work:
+                if normalized_creator:
+                    author_id = generate_normalized_id(normalized_creator, "author")
+                    if author_id not in node_ids_seen:
+                        author_node = {
+                            "id": author_id,
+                            "label": normalized_creator,
+                            "type": "author",
+                            "properties": {"source": "neo4j", "name": normalized_creator},
+                        }
+                        nodes.append(author_node)
+                        node_ids_seen.add(author_id)
 
-                            edge_id = f"{author_id}-created-{work['work_id']}"
-                            if edge_id not in edge_ids_seen:
-                                edge = {
-                                    "id": edge_id,
-                                    "source": author_id,
-                                    "target": work["work_id"],
-                                    "type": "created",
-                                    "properties": {"source": "neo4j"},
-                                }
-                                edges.append(edge)
-                                edge_ids_seen.add(edge_id)
+                    edge_id = f"{author_id}-created-{work['work_id']}"
+                    if edge_id not in edge_ids_seen:
+                        edge = {
+                            "id": edge_id,
+                            "source": author_id,
+                            "target": work["work_id"],
+                            "type": "created",
+                            "properties": {"source": "neo4j"},
+                        }
+                        edges.append(edge)
+                        edge_ids_seen.add(edge_id)
 
             # Add magazines as nodes and create edges (prioritize magazines over publishers)
             for magazine in work["magazines"]:
@@ -735,35 +744,39 @@ class Neo4jMangaRepository:
                     nodes.append(related_node)
                     node_ids_seen.add(related["work_id"])
 
-                    # Add creators
+                    # Add creators - collect all creators for this work first
+                    all_creators_for_related_work = []
                     for creator in related["creators"]:
                         if creator:
                             # Split multiple creators and normalize each one
                             normalized_creators = normalize_and_split_creators(creator)
-                            for normalized_creator in normalized_creators:
-                                if normalized_creator:
-                                    author_id = generate_normalized_id(normalized_creator, "author")
-                                    author_node = {
-                                        "id": author_id,
-                                        "label": normalized_creator,
-                                        "type": "author",
-                                        "properties": {"source": "neo4j", "name": normalized_creator},
-                                    }
-                                if author_id not in node_ids_seen:
-                                    nodes.append(author_node)
-                                    node_ids_seen.add(author_id)
+                            all_creators_for_related_work.extend(normalized_creators)
+                    
+                    # Create individual author nodes for each creator
+                    for normalized_creator in all_creators_for_related_work:
+                        if normalized_creator:
+                            author_id = generate_normalized_id(normalized_creator, "author")
+                            if author_id not in node_ids_seen:
+                                author_node = {
+                                    "id": author_id,
+                                    "label": normalized_creator,
+                                    "type": "author",
+                                    "properties": {"source": "neo4j", "name": normalized_creator},
+                                }
+                                nodes.append(author_node)
+                                node_ids_seen.add(author_id)
 
-                                edge_id = f"{author_id}-created-{related['work_id']}"
-                                if edge_id not in edge_ids_seen:
-                                    edge = {
-                                        "id": edge_id,
-                                        "source": author_id,
-                                        "target": related["work_id"],
-                                        "type": "created",
-                                        "properties": {"source": "neo4j"},
-                                    }
-                                    edges.append(edge)
-                                    edge_ids_seen.add(edge_id)
+                            edge_id = f"{author_id}-created-{related['work_id']}"
+                            if edge_id not in edge_ids_seen:
+                                edge = {
+                                    "id": edge_id,
+                                    "source": author_id,
+                                    "target": related["work_id"],
+                                    "type": "created",
+                                    "properties": {"source": "neo4j"},
+                                }
+                                edges.append(edge)
+                                edge_ids_seen.add(edge_id)
 
                     # Add magazines (missing part - this was causing the issue)
                     if related.get("magazine_name"):
@@ -852,35 +865,39 @@ class Neo4jMangaRepository:
                     nodes.append(related_node)
                     node_ids_seen.add(related["work_id"])
 
-                    # Add creators of period-related works
+                    # Add creators of period-related works - collect all creators first
+                    all_creators_for_period_work = []
                     for creator in related["creators"]:
                         if creator:
                             # Split multiple creators and normalize each one
                             normalized_creators = normalize_and_split_creators(creator)
-                            for normalized_creator in normalized_creators:
-                                if normalized_creator:
-                                    author_id = generate_normalized_id(normalized_creator, "author")
-                                    author_node = {
-                                        "id": author_id,
-                                        "label": normalized_creator,
-                                        "type": "author",
-                                        "properties": {"source": "neo4j", "name": normalized_creator},
-                                    }
-                                if author_id not in node_ids_seen:
-                                    nodes.append(author_node)
-                                    node_ids_seen.add(author_id)
+                            all_creators_for_period_work.extend(normalized_creators)
+                    
+                    # Create individual author nodes for each creator
+                    for normalized_creator in all_creators_for_period_work:
+                        if normalized_creator:
+                            author_id = generate_normalized_id(normalized_creator, "author")
+                            if author_id not in node_ids_seen:
+                                author_node = {
+                                    "id": author_id,
+                                    "label": normalized_creator,
+                                    "type": "author",
+                                    "properties": {"source": "neo4j", "name": normalized_creator},
+                                }
+                                nodes.append(author_node)
+                                node_ids_seen.add(author_id)
 
-                                edge_id = f"{author_id}-created-{related['work_id']}"
-                                if edge_id not in edge_ids_seen:
-                                    edge = {
-                                        "id": edge_id,
-                                        "source": author_id,
-                                        "target": related["work_id"],
-                                        "type": "created",
-                                        "properties": {"source": "neo4j"},
-                                    }
-                                    edges.append(edge)
-                                    edge_ids_seen.add(edge_id)
+                            edge_id = f"{author_id}-created-{related['work_id']}"
+                            if edge_id not in edge_ids_seen:
+                                edge = {
+                                    "id": edge_id,
+                                    "source": author_id,
+                                    "target": related["work_id"],
+                                    "type": "created",
+                                    "properties": {"source": "neo4j"},
+                                }
+                                edges.append(edge)
+                                edge_ids_seen.add(edge_id)
 
         # Final deduplication to ensure no duplicate nodes exist
         unique_nodes = []

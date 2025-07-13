@@ -3,12 +3,12 @@
 メディア芸術データベースを活用した漫画の関係性を可視化するAPIサーバーです。
 
 ## 機能
-
-- 📚 作品検索API
-- 👨‍🎨 作者と作品の関係性データ提供
-- 📖 同じ雑誌に掲載された作品の関係性
-- 🔍 柔軟な検索とフィルタリング
-- 📊 グラフデータの提供（Neo4j）
+- 📊 漫画グラフデータの提供（Neo4j）
+<!-- - ToBe
+  - 📚 作品検索API
+  - 👨‍🎨 作者と作品の関係性データ提供
+  - 📖 同じ雑誌に掲載された作品の関係性
+  - 🔍 柔軟な検索とフィルタリング -->
 
 ## 技術スタック
 
@@ -25,7 +25,7 @@
 
 ### 1. リポジトリのクローン
 ```bash
-git clone <repository-url>
+git clone git@github.com:sea-turt1e/manga-graph.git
 cd manga-graph
 ```
 
@@ -43,11 +43,8 @@ docker-compose logs -f
 # メディア芸術データベースからデータをダウンロード
 python scripts/data_import/download_mediaarts_data.py
 
-# データを解析
-python scripts/data_import/analyze_data_structure.py
-
 # Neo4jにデータを投入
-python import_full_data.py
+python scripts/data_import/import_to_neo4j.py
 ```
 
 ### 4. アプリケーションへのアクセス
@@ -69,28 +66,11 @@ python -m unidic download
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### データ関連の操作
-```bash
-# メディア芸術データベースからデータを取得
-python scripts/data_import/download_mediaarts_data.py
-
-# サンプルデータの作成
-python scripts/create_sample_data.py
-
-# テストデータの作成
-python scripts/data_import/create_test_data.py
-
-# データベースマイグレーション
-python scripts/data_import/migrate_database.py
-```
 
 ## API エンドポイント
 
 - `GET /health` - ヘルスチェック
-- `POST /search` - 作品検索
-- `GET /authors` - 作者一覧
-- `GET /works` - 作品一覧  
-- `GET /magazines` - 雑誌一覧
+- `GET /api/v1/neo4j/search` - Neo4jグラフデータの検索
 
 詳細なAPI仕様は http://localhost:8000/docs で確認できます。
 
@@ -121,7 +101,7 @@ manga-graph/
 ## データソース
 
 - [メディア芸術データベース](https://mediaarts-db.artmuseums.go.jp/)
-- メタデータファイル（JSON形式）を使用してデータを取得
+- [メタデータファイル（JSON形式）](https://github.com/mediaarts-db/dataset/releases)のデータを取得
 
 ## テスト
 
@@ -151,6 +131,6 @@ Apache License 2.0
   - データの詳細は、[OpenBD](https://openbd.jp/)をご覧ください。
 
 
-## 貢献
+## ご協力
 
-プルリクエストやIssueの報告をお待ちしています。
+プルリクエストやIssueの報告は大歓迎です！改善点や新機能の提案など、どんなフィードバックもお待ちしています。

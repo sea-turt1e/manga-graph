@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import re
@@ -5,8 +6,19 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from dotenv import load_dotenv
 from kanjiconv import KanjiConv
 from neo4j import GraphDatabase
+from tqdm import tqdm
+
+parser = argparse.ArgumentParser(description="Import manga data to Neo4j")
+parser.add_argument("--clear", action="store_true", help="Clear database before import")
+parser.add_argument("--test", action="store_true", help="Test mode - show mapping only")
+parser.add_argument("--production", action="store_true", help="Production mode - use production database settings")
+parser.add_argument("--sample", action="store_true", help="Use sample data for testing")
+args = parser.parse_args()
+
+load_dotenv()
 
 
 # データ読み込み関数
@@ -17,10 +29,15 @@ def load_json_ld(filename):
     return data.get("@graph", [])
 
 
-# Neo4j接続設定
-neo4j_uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-neo4j_user = os.getenv("NEO4J_USER", "neo4j")
-neo4j_password = os.getenv("NEO4J_PASSWORD", "password")
+if args.production:
+    # Neo4j接続設定
+    neo4j_uri = os.getenv("NEO4J_URI")
+    neo4j_user = os.getenv("NEO4J_USER")
+    neo4j_password = os.getenv("NEO4J_PASSWORD")
+else:
+    neo4j_uri = "bolt://localhost:7687"
+    neo4j_user = "neo4j"
+    neo4j_password = "password"
 
 
 class NameNormalizer:
@@ -438,14 +455,6 @@ class MangaGraphDB:
 if __name__ == "__main__":
     print("=== Neo4j Import v3 ===")
 
-    # コマンドライン引数で処理を制御
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Import manga data to Neo4j")
-    parser.add_argument("--clear", action="store_true", help="Clear database before import")
-    parser.add_argument("--test", action="store_true", help="Test mode - show mapping only")
-    args = parser.parse_args()
-
     # テストモードの場合はマッピングを表示
     if args.test:
         print("\n=== Testing brand to magazine mapping ===")
@@ -514,10 +523,10 @@ if __name__ == "__main__":
         print("\nClassifying data...")
         error_count = 0
 
-        for i, item in enumerate(all_data):
-            if i % 10000 == 0:
-                print(f"  Progress: {i}/{len(all_data)}")
-
+        for i, item in enumerate(tqdm(all_data)):
+            if args.sample and i >= 100:
+                print("Sample limit reached, stopping early.")
+                break
             try:
                 item_type = item.get("@type", "")
                 genre = item.get("schema:genre", "")
@@ -658,7 +667,7 @@ if __name__ == "__main__":
 
         print("\nGrouping manga books into works...")
 
-        for book in manga_books:
+        for book in tqdm(manga_books, desc="Grouping manga books"):
             # 作品名を取得（巻数を除いたタイトル）
             full_name = book.get("schema:name", "")
 
@@ -736,7 +745,12 @@ if __name__ == "__main__":
         # シリーズから得た雑誌情報を作品に適用
         print("\nApplying series magazine information to works...")
         series_matches = 0
-        for series_id, series_magazines in series_magazine_map.items():
+        for i, (series_id, series_magazines) in tqdm(
+            enumerate(series_magazine_map.items()), total=len(series_magazine_map)
+        ):
+            if args.sample and i >= 100:
+                print("Sample limit reached, stopping early.")
+                break
             # シリーズ名を取得
             series_name = None
             for series in manga_series:
@@ -795,9 +809,10 @@ if __name__ == "__main__":
         print("\nCreating publisher nodes...")
         publisher_map = {}  # original -> normalized_id
 
-        for i, publisher in enumerate(publishers):
-            if i % 100 == 0:
-                print(f"  Progress: {i}/{len(publishers)}")
+        for i, publisher in enumerate(tqdm(publishers), total=len(publishers), desc="Processing publishers"):
+            if args.sample and i >= 100:
+                print("Sample limit reached, stopping early.")
+                break
 
             publisher_id = db.create_publisher_node(publisher)
             if publisher_id:
@@ -807,9 +822,12 @@ if __name__ == "__main__":
         print("\nCreating author nodes...")
         author_map = {}  # original_id -> normalized_id
 
-        for i, (author_id, author_data) in enumerate(authors_data.items()):
-            if i % 100 == 0:
-                print(f"  Progress: {i}/{len(authors_data)}")
+        for i, (author_id, author_data) in enumerate(
+            tqdm(authors_data.items(), total=len(authors_data), desc="Processing authors")
+        ):
+            if args.sample and i >= 100:
+                print("Sample limit reached, stopping early.")
+                break
 
             # 最も優先度の高い名前を選択
             if author_data["names"]:
@@ -857,9 +875,10 @@ if __name__ == "__main__":
         magazine_map = {}  # magazine_name -> magazine_id
         magazine_id_to_name = {}  # magazine_id -> magazine_name
 
-        for i, magazine in enumerate(magazines):
-            if i % 100 == 0:
-                print(f"  Progress: {i}/{len(magazines)}")
+        for i, magazine in enumerate(tqdm(magazines), total=len(magazines), desc="Processing magazines"):
+            if args.sample and i >= 100:
+                print("Sample limit reached, stopping early.")
+                break
 
             normalized_id = db.create_magazine_node(magazine)
             if normalized_id:
@@ -904,8 +923,11 @@ if __name__ == "__main__":
         for i, (name, mag_id) in enumerate(list(magazine_map.items())[:10]):
             print(f"  {name} -> {mag_id}")
 
-        for i in range(0, len(work_items), BATCH_SIZE):
+        for i in tqdm(range(0, len(work_items), BATCH_SIZE), desc="Processing works"):
             batch = work_items[i : i + BATCH_SIZE]
+            if args.sample and i >= 100:
+                print("Sample limit reached, stopping early.")
+                break
             try:
                 for work_key, work_data in batch:
                     # 作品ノードを作成

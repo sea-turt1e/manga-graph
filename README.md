@@ -1,6 +1,13 @@
-# Manga Graph Visualizer
+# Manga Graph
 
-メディア芸術データベースを活用した漫画の関係性を可視化するAPIサーバーです。
+メディア芸術データベースを活用した漫画の関係性を可視化するAPIサーバーです。  
+こちらは主にバックエンド側とデータベースのリポジトリになります。  
+フロントエンドのリポジトリは[こちら（manga-graph-frontend）](https://github.com/sea-turt1e/manga-graph-frontend)
+
+## デモ
+デモは[Manga Graph Visualizer](https://mangagraph.netlify.app/)として公開されており、インタラクティブなグラフ操作が可能です。
+
+[![Manga_Graph_Visualizer_demo](/images/manga_graph_visualizer.gif)](https://mangagraph.netlify.app/)
 
 ## 機能
 - 📊 漫画グラフデータの提供（Neo4j）
@@ -68,6 +75,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 
 ## API エンドポイント
+### 主要API
 
 - `GET /health` - ヘルスチェック
 - `GET /api/v1/neo4j/search` - Neo4jグラフデータの検索
@@ -106,29 +114,25 @@ manga-graph/
 ## テスト
 
 ```bash
-# 全テストの実行
-python -m pytest tests/
-
-# ユニットテストのみ
 python -m pytest tests/unit/
+```
 
-# 統合テストのみ
+<!-- # 全テストの実行
+python -m pytest tests/
+# # 統合テストのみ
 python -m pytest tests/integration/
 
 # E2Eテストのみ
-python -m pytest tests/e2e/
-```
+python -m pytest tests/e2e/ -->
 
 ## ライセンス
 
 Apache License 2.0
 
-## データセット
+## 使用データセット
 このアプリケーションは、以下のデータセットを使用しています：
-- 出典：独立行政法人国立美術館国立アートリサーチセンター「メディア芸術データベース」 （https://mediaarts-db.artmuseums.go.jp/）
-  - またこのリポジトリ内のスクリプトによってデータをグラフ化し、Neo4jに投入しています。
-- OpenBDのデータ
-  - データの詳細は、[OpenBD](https://openbd.jp/)をご覧ください。
+- 独立行政法人国立美術館国立アートリサーチセンター「[メディア芸術データベース](https://mediaarts-db.artmuseums.go.jp/)」
+- [OpenBD](https://openbd.jp/)
 
 
 ## ご協力

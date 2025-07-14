@@ -809,7 +809,7 @@ if __name__ == "__main__":
         print("\nCreating publisher nodes...")
         publisher_map = {}  # original -> normalized_id
 
-        for i, publisher in enumerate(tqdm(publishers), total=len(publishers), desc="Processing publishers"):
+        for i, publisher in enumerate(tqdm(publishers, total=len(publishers), desc="Processing publishers")):
             if args.sample and i >= 100:
                 print("Sample limit reached, stopping early.")
                 break
@@ -875,7 +875,7 @@ if __name__ == "__main__":
         magazine_map = {}  # magazine_name -> magazine_id
         magazine_id_to_name = {}  # magazine_id -> magazine_name
 
-        for i, magazine in enumerate(tqdm(magazines), total=len(magazines), desc="Processing magazines"):
+        for i, magazine in enumerate(tqdm(magazines, total=len(magazines), desc="Processing magazines")):
             if args.sample and i >= 100:
                 print("Sample limit reached, stopping early.")
                 break

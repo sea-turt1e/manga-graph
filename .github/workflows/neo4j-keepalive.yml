@@ -1,0 +1,74 @@
+name: Neo4j AuraDB Keep-Alive
+
+on:
+  schedule:
+    # 毎日午前9時（UTC）に実行 = 日本時間18時
+    - cron: '0 9 * * *'
+  workflow_dispatch: # 手動実行も可能
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install Neo4j driver
+      run: |
+        pip install neo4j
+    
+    - name: Keep Neo4j AuraDB alive
+      env:
+        NEO4J_URI: ${{ secrets.NEO4J_URI }}
+        NEO4J_USERNAME: ${{ secrets.NEO4J_USER }}
+        NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
+      run: |
+        python << 'EOF'
+        from neo4j import GraphDatabase
+        import os
+        import sys
+        from datetime import datetime
+        
+        def keep_alive():
+            uri = os.getenv('NEO4J_URI')
+            username = os.getenv('NEO4J_USERNAME')
+            password = os.getenv('NEO4J_PASSWORD')
+            
+            if not all([uri, username, password]):
+                print("❌ 環境変数が設定されていません")
+                sys.exit(1)
+            
+            try:
+                driver = GraphDatabase.driver(uri, auth=(username, password))
+                
+                with driver.session() as session:
+                    # 軽いクエリを実行してアクセス記録を残す
+                    result = session.run("RETURN datetime() AS current_time, 'keep-alive' AS status")
+                    record = result.single()
+                    
+                    print(f"✅ Neo4j AuraDB Keep-Alive成功!")
+                    print(f"🕐 時刻: {record['current_time']}")
+                    print(f"📊 ステータス: {record['status']}")
+                    
+                    # データベース情報も取得
+                    db_info = session.run("CALL db.info() YIELD name, value RETURN name, value LIMIT 5")
+                    print("📈 データベース情報:")
+                    for record in db_info:
+                        print(f"   {record['name']}: {record['value']}")
+                
+                driver.close()
+                print("✅ 接続を正常に終了しました")
+                
+            except Exception as e:
+                print(f"❌ エラーが発生しました: {e}")
+                sys.exit(1)
+        
+        if __name__ == "__main__":
+            keep_alive()
+        EOF

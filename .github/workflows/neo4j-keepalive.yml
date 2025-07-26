@@ -26,7 +26,7 @@ jobs:
     - name: Keep Neo4j AuraDB alive
       env:
         NEO4J_URI: ${{ secrets.NEO4J_URI }}
-        NEO4J_USERNAME: ${{ secrets.NEO4J_USER }}
+        NEO4J_USERNAME: ${{ secrets.NEO4J_USERNAME }}
         NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
       run: |
         python << 'EOF'
@@ -56,11 +56,27 @@ jobs:
                     print(f"🕐 時刻: {record['current_time']}")
                     print(f"📊 ステータス: {record['status']}")
                     
-                    # データベース情報も取得
-                    db_info = session.run("CALL db.info() YIELD name, value RETURN name, value LIMIT 5")
-                    print("📈 データベース情報:")
-                    for record in db_info:
-                        print(f"   {record['name']}: {record['value']}")
+                    # データベース情報も取得（AuraDB対応版）
+                    try:
+                        # ノード数とリレーションシップ数を取得
+                        stats_result = session.run("""
+                            MATCH (n) 
+                            OPTIONAL MATCH ()-[r]->() 
+                            RETURN count(DISTINCT n) AS nodes, count(DISTINCT r) AS relationships
+                        """)
+                        stats = stats_result.single()
+                        print("📈 データベース統計:")
+                        print(f"   ノード数: {stats['nodes']}")
+                        print(f"   リレーションシップ数: {stats['relationships']}")
+                        
+                        # データベース名を取得
+                        db_result = session.run("CALL db.info() YIELD name RETURN name")
+                        db_name = db_result.single()
+                        print(f"   データベース名: {db_name['name']}")
+                        
+                    except Exception as db_error:
+                        print(f"📈 データベース情報取得をスキップ: {db_error}")
+                        # エラーでも keep-alive は成功しているので続行
                 
                 driver.close()
                 print("✅ 接続を正常に終了しました")

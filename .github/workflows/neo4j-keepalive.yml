@@ -1,29 +1,24 @@
-name: Neo4j AuraDB Keep-Alive
+name: Neo4j AuraDB Keep-Alive (Safe)
 
 on:
   schedule:
-    # 毎日午前9時（UTC）に実行 = 日本時間18時
-    - cron: '0 9 * * *'
-  workflow_dispatch: # 手動実行も可能
+    - cron: '0 9 * * *' # 毎日午前9時（UTC）
+  workflow_dispatch:
 
 jobs:
-  keepalive:
+  keepalive-safe:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.12'
     
     - name: Install Neo4j driver
-      run: |
-        pip install neo4j
+      run: pip install neo4j
     
-    - name: Keep Neo4j AuraDB alive
+    - name: Simple Keep-Alive
       env:
         NEO4J_URI: ${{ secrets.NEO4J_URI }}
         NEO4J_USERNAME: ${{ secrets.NEO4J_USER }}
@@ -33,9 +28,8 @@ jobs:
         from neo4j import GraphDatabase
         import os
         import sys
-        from datetime import datetime
         
-        def keep_alive():
+        def simple_keep_alive():
             uri = os.getenv('NEO4J_URI')
             username = os.getenv('NEO4J_USERNAME')
             password = os.getenv('NEO4J_PASSWORD')
@@ -48,35 +42,13 @@ jobs:
                 driver = GraphDatabase.driver(uri, auth=(username, password))
                 
                 with driver.session() as session:
-                    # 軽いクエリを実行してアクセス記録を残す
-                    result = session.run("RETURN datetime() AS current_time, 'keep-alive' AS status")
+                    # 最もシンプルなクエリでKeep-Alive
+                    result = session.run("RETURN 'Neo4j AuraDB Keep-Alive OK' AS message, datetime() AS timestamp")
                     record = result.single()
                     
-                    print(f"✅ Neo4j AuraDB Keep-Alive成功!")
-                    print(f"🕐 時刻: {record['current_time']}")
-                    print(f"📊 ステータス: {record['status']}")
-                    
-                    # データベース情報も取得（AuraDB対応版）
-                    try:
-                        # ノード数とリレーションシップ数を取得
-                        stats_result = session.run("""
-                            MATCH (n) 
-                            OPTIONAL MATCH ()-[r]->() 
-                            RETURN count(DISTINCT n) AS nodes, count(DISTINCT r) AS relationships
-                        """)
-                        stats = stats_result.single()
-                        print("📈 データベース統計:")
-                        print(f"   ノード数: {stats['nodes']}")
-                        print(f"   リレーションシップ数: {stats['relationships']}")
-                        
-                        # データベース名を取得
-                        db_result = session.run("CALL db.info() YIELD name RETURN name")
-                        db_name = db_result.single()
-                        print(f"   データベース名: {db_name['name']}")
-                        
-                    except Exception as db_error:
-                        print(f"📈 データベース情報取得をスキップ: {db_error}")
-                        # エラーでも keep-alive は成功しているので続行
+                    print("✅ Neo4j AuraDB Keep-Alive成功!")
+                    print(f"📝 メッセージ: {record['message']}")
+                    print(f"🕐 時刻: {record['timestamp']}")
                 
                 driver.close()
                 print("✅ 接続を正常に終了しました")
@@ -85,6 +57,5 @@ jobs:
                 print(f"❌ エラーが発生しました: {e}")
                 sys.exit(1)
         
-        if __name__ == "__main__":
-            keep_alive()
+        simple_keep_alive()
         EOF

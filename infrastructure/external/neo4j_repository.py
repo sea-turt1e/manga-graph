@@ -50,7 +50,6 @@ class Neo4jMangaRepository:
     def search_manga_works(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Search for manga works by title, grouping by series"""
         logger.info(f"Searching for manga works with term: '{search_term}', limit: {limit}")
-
         with self.driver.session() as session:
             # First, get all matching works and publications
             query = """
@@ -527,7 +526,7 @@ class Neo4jMangaRepository:
                 if creator:
                     normalized_creators = normalize_and_split_creators(creator)
                     all_creators_for_publication.extend(normalized_creators)
-            
+
             # Create individual author nodes for each creator
             for normalized_creator in all_creators_for_publication:
                 if normalized_creator:
@@ -590,7 +589,7 @@ class Neo4jMangaRepository:
                     # Split multiple creators and normalize each one
                     normalized_creators = normalize_and_split_creators(creator)
                     all_creators_for_work.extend(normalized_creators)
-            
+
             # Create individual author nodes for each creator
             for normalized_creator in all_creators_for_work:
                 if normalized_creator:
@@ -751,7 +750,7 @@ class Neo4jMangaRepository:
                             # Split multiple creators and normalize each one
                             normalized_creators = normalize_and_split_creators(creator)
                             all_creators_for_related_work.extend(normalized_creators)
-                    
+
                     # Create individual author nodes for each creator
                     for normalized_creator in all_creators_for_related_work:
                         if normalized_creator:
@@ -872,7 +871,7 @@ class Neo4jMangaRepository:
                             # Split multiple creators and normalize each one
                             normalized_creators = normalize_and_split_creators(creator)
                             all_creators_for_period_work.extend(normalized_creators)
-                    
+
                     # Create individual author nodes for each creator
                     for normalized_creator in all_creators_for_period_work:
                         if normalized_creator:

@@ -87,13 +87,15 @@ def generate_huggingface_embedding(text: str) -> List[float]:
     Generate embedding using Hugging Face sentence-transformers (optional)
     """
     try:
+        import torch
         from sentence_transformers import SentenceTransformer
 
         # Load model (cached after first use)
-        model = SentenceTransformer("all-MiniLM-L6-v2")
-        embedding = model.encode(text)
+        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        model = SentenceTransformer("cl-nagoya/ruri-v3-310m", device=device)
+        embedding = model.encode(text, convert_to_tensor=True)
 
-        # Pad or truncate to 1536 dimensions to match OpenAI format
+        # Pad or truncate to 1536 dimensions
         if len(embedding) < 1536:
             # Pad with zeros
             padded = [0.0] * 1536

@@ -1,6 +1,7 @@
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
 import base64
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel
 
 
 class NodeData(BaseModel):
@@ -23,6 +24,25 @@ class SearchRequest(BaseModel):
     depth: Optional[int] = 2
     node_types: Optional[List[str]] = None
     edge_types: Optional[List[str]] = None
+
+
+class VectorSearchRequest(BaseModel):
+    query: Optional[str] = None
+    embedding: Optional[List[float]] = None
+    limit: Optional[int] = 20
+    use_hybrid: Optional[bool] = True  # Whether to combine text and vector search
+
+
+class VectorIndexRequest(BaseModel):
+    label: str
+    property_name: Optional[str] = "embedding"
+    dimension: Optional[int] = 1536
+    similarity: Optional[str] = "cosine"
+
+
+class AddEmbeddingRequest(BaseModel):
+    work_id: str
+    embedding: List[float]
 
 
 class GraphResponse(BaseModel):
@@ -74,11 +94,11 @@ class ImageFetchResponse(BaseModel):
         """Create response from bytes data"""
         return cls(
             work_id=work_id,
-            image_data=base64.b64encode(image_data).decode('utf-8') if image_data else '',
-            content_type=content_type or '',
+            image_data=base64.b64encode(image_data).decode("utf-8") if image_data else "",
+            content_type=content_type or "",
             file_size=len(image_data) if image_data else 0,
             success=success,
-            error=error
+            error=error,
         )
 
 

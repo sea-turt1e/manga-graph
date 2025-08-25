@@ -5,11 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from domain.services import MediaArtsDataService
 from domain.services.cover_cache_service import get_cache_service
 from domain.services.cover_image_service import get_cover_service
-from domain.services.image_fetch_service import get_image_fetch_service, ImageFetchService
+from domain.services.image_fetch_service import ImageFetchService, get_image_fetch_service
 from domain.services.neo4j_media_arts_service import Neo4jMediaArtsService
 from domain.use_cases import SearchMangaUseCase
 from infrastructure.database import Neo4jMangaRepository
 from presentation.schemas import (
+    AddEmbeddingRequest,
     AuthorResponse,
     BulkCoverRequest,
     BulkCoverResponse,
@@ -21,6 +22,8 @@ from presentation.schemas import (
     ImageFetchResponse,
     MagazineResponse,
     SearchRequest,
+    VectorIndexRequest,
+    VectorSearchRequest,
     WorkResponse,
 )
 
@@ -434,25 +437,29 @@ async def get_bulk_covers(
                 # Get work details from Neo4j
                 work_data = neo4j_service.get_work_by_id(work_id)
                 if not work_data:
-                    results.append(CoverResponse(
-                        work_id=work_id,
-                        cover_url=None,
-                        source="error",
-                        has_real_cover=False,
-                        error="Work not found"
-                    ))
+                    results.append(
+                        CoverResponse(
+                            work_id=work_id,
+                            cover_url=None,
+                            source="error",
+                            has_real_cover=False,
+                            error="Work not found",
+                        )
+                    )
                     error_count += 1
                     continue
 
                 # Try to get cover using existing cover_image_url first
                 if work_data.get("cover_image_url"):
                     if cover_service.validate_cover_url(work_data["cover_image_url"]):
-                        results.append(CoverResponse(
-                            work_id=work_id,
-                            cover_url=work_data["cover_image_url"],
-                            source="database",
-                            has_real_cover=True
-                        ))
+                        results.append(
+                            CoverResponse(
+                                work_id=work_id,
+                                cover_url=work_data["cover_image_url"],
+                                source="database",
+                                has_real_cover=True,
+                            )
+                        )
                         success_count += 1
                         continue
 
@@ -466,29 +473,24 @@ async def get_bulk_covers(
                     isbn=isbn, title=title, genre=genre, publisher=publisher
                 )
 
-                results.append(CoverResponse(
-                    work_id=work_id,
-                    cover_url=cover_result.get("cover_url"),
-                    source=cover_result.get("source", "unknown"),
-                    has_real_cover=cover_result.get("has_real_cover", False)
-                ))
+                results.append(
+                    CoverResponse(
+                        work_id=work_id,
+                        cover_url=cover_result.get("cover_url"),
+                        source=cover_result.get("source", "unknown"),
+                        has_real_cover=cover_result.get("has_real_cover", False),
+                    )
+                )
                 success_count += 1
 
             except Exception as e:
-                results.append(CoverResponse(
-                    work_id=work_id,
-                    cover_url=None,
-                    source="error",
-                    has_real_cover=False,
-                    error=str(e)
-                ))
+                results.append(
+                    CoverResponse(work_id=work_id, cover_url=None, source="error", has_real_cover=False, error=str(e))
+                )
                 error_count += 1
 
         return BulkCoverResponse(
-            results=results,
-            total_processed=len(request.work_ids),
-            success_count=success_count,
-            error_count=error_count
+            results=results, total_processed=len(request.work_ids), success_count=success_count, error_count=error_count
         )
 
     except Exception as e:
@@ -660,11 +662,11 @@ async def fetch_single_image(
             result = await image_service.fetch_single_image(request.work_id, request.cover_url)
 
             return ImageFetchResponse.from_bytes(
-                work_id=result['work_id'],
-                image_data=result['image_data'],
-                content_type=result['content_type'],
-                success=result['success'],
-                error=result['error']
+                work_id=result["work_id"],
+                image_data=result["image_data"],
+                content_type=result["content_type"],
+                success=result["success"],
+                error=result["error"],
             )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -678,10 +680,7 @@ async def fetch_bulk_images(
     """Fetch multiple images concurrently from URLs"""
     try:
         # Convert requests to format expected by service
-        fetch_requests = [
-            {"work_id": req.work_id, "cover_url": req.cover_url}
-            for req in request.requests
-        ]
+        fetch_requests = [{"work_id": req.work_id, "cover_url": req.cover_url} for req in request.requests]
 
         async with image_service:
             results = await image_service.fetch_images(fetch_requests)
@@ -692,22 +691,309 @@ async def fetch_bulk_images(
 
             for result in results:
                 image_response = ImageFetchResponse.from_bytes(
-                    work_id=result['work_id'],
-                    image_data=result['image_data'],
-                    content_type=result['content_type'],
-                    success=result['success'],
-                    error=result['error']
+                    work_id=result["work_id"],
+                    image_data=result["image_data"],
+                    content_type=result["content_type"],
+                    success=result["success"],
+                    error=result["error"],
                 )
                 response_results.append(image_response)
 
-                if result['success']:
+                if result["success"]:
                     success_count += 1
 
             return BulkImageFetchResponse(
                 results=response_results,
                 total_processed=len(results),
                 success_count=success_count,
-                error_count=len(results) - success_count
+                error_count=len(results) - success_count,
             )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Vector search endpoints
+@neo4j_router.post("/vector/create-index")
+async def create_vector_index(
+    request: VectorIndexRequest,
+    neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
+):
+    """Create a vector index for semantic search"""
+    try:
+        if neo4j_service is None or neo4j_service.neo4j_repository is None:
+            raise HTTPException(status_code=503, detail="Neo4j service not available")
+
+        neo4j_service.neo4j_repository.create_vector_index(
+            label=request.label,
+            property_name=request.property_name,
+            dimension=request.dimension,
+            similarity=request.similarity,
+        )
+        return {"message": f"Vector index created successfully for {request.label}.{request.property_name}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@neo4j_router.post("/vector/search", response_model=GraphResponse)
+async def vector_search_manga(
+    request: VectorSearchRequest,
+    neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
+):
+    """Search manga using vector similarity"""
+    try:
+        if neo4j_service is None or neo4j_service.neo4j_repository is None:
+            raise HTTPException(status_code=503, detail="Neo4j service not available")
+
+        # Validate input
+        if not request.query and not request.embedding:
+            raise HTTPException(status_code=400, detail="Either query or embedding must be provided")
+
+        # Get search results
+        if request.use_hybrid and request.query and request.embedding:
+            # Hybrid search
+            results = neo4j_service.neo4j_repository.search_manga_works_with_vector(
+                search_term=request.query, embedding=request.embedding, limit=request.limit
+            )
+        elif request.embedding:
+            # Vector only search
+            results = neo4j_service.neo4j_repository.search_by_vector(embedding=request.embedding, limit=request.limit)
+        elif request.query:
+            # Text only search
+            results = neo4j_service.neo4j_repository.search_manga_works(search_term=request.query, limit=request.limit)
+        else:
+            results = []
+
+        # Convert to graph format
+        nodes = []
+        edges = []
+
+        for work in results:
+            node = {
+                "id": work["work_id"],
+                "label": work["title"],
+                "type": "work",
+                "properties": {
+                    "title": work["title"],
+                    "creators": work.get("creators", []),
+                    "publishers": work.get("publishers", []),
+                    "magazines": work.get("magazines", []),
+                    "genre": work.get("genre"),
+                    "isbn": work.get("isbn"),
+                    "volume": work.get("volume"),
+                    "published_date": work.get("published_date"),
+                    "similarity_score": work.get("similarity_score"),
+                    "search_score": work.get("search_score"),
+                    "source": "neo4j",
+                },
+            }
+            nodes.append(node)
+
+        return GraphResponse(nodes=nodes, edges=edges, total_nodes=len(nodes), total_edges=len(edges))
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@neo4j_router.post("/vector/add-embedding")
+async def add_embedding_to_work(
+    request: AddEmbeddingRequest,
+    neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
+):
+    """Add embedding vector to a work node"""
+    try:
+        if neo4j_service is None or neo4j_service.neo4j_repository is None:
+            raise HTTPException(status_code=503, detail="Neo4j service not available")
+
+        success = neo4j_service.neo4j_repository.add_embedding_to_work(
+            work_id=request.work_id, embedding=request.embedding
+        )
+
+        if success:
+            return {"message": f"Embedding added successfully to work: {request.work_id}"}
+        else:
+            raise HTTPException(status_code=404, detail=f"Work not found: {request.work_id}")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@neo4j_router.get("/vector/progress")
+async def get_vector_progress(
+    neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
+):
+    """Get progress of vector embedding addition"""
+    try:
+        if neo4j_service is None or neo4j_service.neo4j_repository is None:
+            raise HTTPException(status_code=503, detail="Neo4j service not available")
+
+        with neo4j_service.neo4j_repository.driver.session() as session:
+            # Works with embeddings
+            work_stats = session.run(
+                """
+                MATCH (w:Work)
+                RETURN
+                    count(*) as total_works,
+                    count(w.embedding) as works_with_embeddings
+            """
+            ).single()
+
+            # Authors with embeddings
+            author_stats = session.run(
+                """
+                MATCH (a:Author)
+                RETURN
+                    count(*) as total_authors,
+                    count(a.embedding) as authors_with_embeddings
+            """
+            ).single()
+
+            # Magazines with embeddings
+            magazine_stats = session.run(
+                """
+                MATCH (m:Magazine)
+                RETURN
+                    count(*) as total_magazines,
+                    count(m.embedding) as magazines_with_embeddings
+            """
+            ).single()
+
+            return {
+                "status": "success",
+                "data": {
+                    "works": {
+                        "total": work_stats["total_works"],
+                        "with_embeddings": work_stats["works_with_embeddings"],
+                        "percentage": (
+                            (work_stats["works_with_embeddings"] / work_stats["total_works"] * 100)
+                            if work_stats["total_works"] > 0
+                            else 0
+                        ),
+                    },
+                    "authors": {
+                        "total": author_stats["total_authors"],
+                        "with_embeddings": author_stats["authors_with_embeddings"],
+                        "percentage": (
+                            (author_stats["authors_with_embeddings"] / author_stats["total_authors"] * 100)
+                            if author_stats["total_authors"] > 0
+                            else 0
+                        ),
+                    },
+                    "magazines": {
+                        "total": magazine_stats["total_magazines"],
+                        "with_embeddings": magazine_stats["magazines_with_embeddings"],
+                        "percentage": (
+                            (magazine_stats["magazines_with_embeddings"] / magazine_stats["total_magazines"] * 100)
+                            if magazine_stats["total_magazines"] > 0
+                            else 0
+                        ),
+                    },
+                },
+            }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@neo4j_router.post("/vector/batch-add")
+async def batch_add_embeddings(
+    node_type: str = Query("Work", description="Node type to process (Work, Author, Magazine)"),
+    limit: int = Query(100, description="Number of nodes to process"),
+    neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
+):
+    """Batch add embeddings to nodes"""
+    try:
+        if neo4j_service is None or neo4j_service.neo4j_repository is None:
+            raise HTTPException(status_code=503, detail="Neo4j service not available")
+
+        # Import here to avoid startup issues
+        import hashlib
+
+        def generate_simple_embedding(text: str) -> List[float]:
+            """Generate a simple hash-based embedding"""
+            hash_input = text.encode("utf-8")
+            hashes = []
+            for i in range(6):
+                hash_obj = hashlib.sha256(hash_input + str(i).encode())
+                hash_hex = hash_obj.hexdigest()
+                hashes.append(hash_hex)
+
+            embedding = []
+            combined_hash = "".join(hashes)
+
+            for i in range(1536):
+                char_index = i % len(combined_hash)
+                if combined_hash[char_index].isdigit():
+                    value = int(combined_hash[char_index]) / 15.0 - 0.5
+                else:
+                    value = (ord(combined_hash[char_index]) - ord("a") + 10) / 15.0 - 0.5
+                value += (i % 100) / 10000.0 - 0.005
+                embedding.append(value)
+
+            return embedding
+
+        success_count = 0
+        failed_count = 0
+
+        with neo4j_service.neo4j_repository.driver.session() as session:
+            if node_type == "Work":
+                query = """
+                MATCH (w:Work)
+                WHERE w.title IS NOT NULL AND w.embedding IS NULL
+                RETURN w.id as id, w.title as title, w.genre as genre
+                LIMIT $limit
+                """
+                result = session.run(query, limit=limit)
+
+                for record in result:
+                    try:
+                        text_parts = [record["title"]]
+                        if record["genre"]:
+                            text_parts.append(record["genre"])
+                        text = " ".join(text_parts)
+
+                        embedding = generate_simple_embedding(text)
+                        success = neo4j_service.neo4j_repository.add_embedding_to_work(record["id"], embedding)
+
+                        if success:
+                            success_count += 1
+                        else:
+                            failed_count += 1
+                    except Exception:
+                        failed_count += 1
+
+            elif node_type == "Author":
+                query = """
+                MATCH (a:Author)
+                WHERE a.name IS NOT NULL AND a.embedding IS NULL
+                RETURN a.id as id, a.name as name
+                LIMIT $limit
+                """
+                result = session.run(query, limit=limit)
+
+                for record in result:
+                    try:
+                        embedding = generate_simple_embedding(record["name"])
+
+                        update_query = """
+                        MATCH (a:Author {id: $id})
+                        SET a.embedding = $embedding
+                        RETURN a.id
+                        """
+                        update_result = session.run(update_query, id=record["id"], embedding=embedding)
+
+                        if update_result.single():
+                            success_count += 1
+                        else:
+                            failed_count += 1
+                    except Exception:
+                        failed_count += 1
+
+        return {
+            "message": f"Batch processing completed for {node_type}",
+            "processed": success_count + failed_count,
+            "success_count": success_count,
+            "failed_count": failed_count,
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -47,10 +47,166 @@ class Neo4jMangaRepository:
         if self.driver:
             self.driver.close()
 
+    def create_vector_index(
+        self, label: str, property_name: str = "embedding", dimension: int = 1536, similarity: str = "cosine"
+    ):
+        """Create a vector index for semantic search"""
+        logger.info(
+            f"Creating vector index for {label}.{property_name} with dimension {dimension} and similarity {similarity}"
+        )
+        with self.driver.session() as session:
+            try:
+                # Check if index already exists
+                check_query = """
+                SHOW INDEXES YIELD name, labelsOrTypes, properties, type
+                WHERE type = 'VECTOR' AND $label IN labelsOrTypes AND $property IN properties
+                RETURN count(*) as count
+                """
+                result = session.run(check_query, label=label, property=property_name)
+                count = result.single()["count"]
+
+                if count > 0:
+                    logger.info(f"Vector index for {label}.{property_name} already exists")
+                    return
+
+                # Create vector index
+                query = """
+                CALL db.index.vector.createNodeIndex(
+                    $index_name, $label, $property, $dimension, $similarity
+                )
+                """
+                index_name = f"{label}_{property_name}_vector_index"
+                session.run(
+                    query,
+                    index_name=index_name,
+                    label=label,
+                    property=property_name,
+                    dimension=dimension,
+                    similarity=similarity,
+                )
+                logger.info(f"Successfully created vector index: {index_name}")
+            except Exception as e:
+                logger.error(f"Failed to create vector index for {label}.{property_name}: {e}")
+                raise
+
+    def search_by_vector(
+        self, embedding: List[float], label: str = "Work", property_name: str = "embedding", limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Search nodes by vector similarity"""
+        logger.info(f"Searching by vector similarity for {label} nodes, limit: {limit}")
+        with self.driver.session() as session:
+            query = """
+            CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
+            YIELD node, score
+            OPTIONAL MATCH (node)-[:CREATED_BY]->(a:Author)
+            OPTIONAL MATCH (node)-[:PUBLISHED_IN]->(m:Magazine)
+            OPTIONAL MATCH (m)-[:PUBLISHED_BY]->(p:Publisher)
+            OPTIONAL MATCH (s:Series)-[:CONTAINS]->(node)
+            RETURN node.id as work_id, node.title as title, node.published_date as published_date,
+                   node.first_published as first_published, node.last_published as last_published,
+                   collect(DISTINCT a.name) as creators,
+                   collect(DISTINCT p.name) as publishers,
+                   collect(DISTINCT m.title) as magazines,
+                   node.genre as genre, node.isbn as isbn, node.volume as volume,
+                   s.id as series_id, s.name as series_name,
+                   score
+            ORDER BY score DESC
+            """
+
+            try:
+                index_name = f"{label}_{property_name}_vector_index"
+                result = session.run(query, index_name=index_name, limit=limit, embedding=embedding)
+                works = []
+
+                for record in result:
+                    work = {
+                        "work_id": record["work_id"],
+                        "title": record["title"],
+                        "published_date": record["published_date"],
+                        "first_published": record["first_published"],
+                        "last_published": record["last_published"],
+                        "creators": [c for c in record["creators"] if c],
+                        "publishers": [p for p in record["publishers"] if p],
+                        "magazines": [m for m in record["magazines"] if m],
+                        "genre": record["genre"],
+                        "isbn": record["isbn"],
+                        "volume": record["volume"],
+                        "series_id": record["series_id"],
+                        "series_name": record["series_name"],
+                        "similarity_score": record["score"],
+                    }
+                    works.append(work)
+
+                logger.info(f"Found {len(works)} works by vector similarity")
+                return works
+
+            except Exception as e:
+                logger.error(f"Vector search failed: {e}")
+                return []
+
+    def add_embedding_to_work(self, work_id: str, embedding: List[float]):
+        """Add embedding vector to a work node"""
+        logger.info(f"Adding embedding to work: {work_id}")
+        with self.driver.session() as session:
+            query = """
+            MATCH (w:Work {id: $work_id})
+            SET w.embedding = $embedding
+            RETURN w.id as work_id
+            """
+            result = session.run(query, work_id=work_id, embedding=embedding)
+            record = result.single()
+            if record:
+                logger.info(f"Successfully added embedding to work: {work_id}")
+                return True
+            else:
+                logger.warning(f"Work not found: {work_id}")
+                return False
+
+    def search_manga_works_with_vector(
+        self, search_term: str = None, embedding: List[float] = None, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Search for manga works using both text and vector similarity"""
+        logger.info(
+            f"Searching manga works with text: '{search_term}' and vector: {embedding is not None}, limit: {limit}"
+        )
+
+        if embedding and search_term:
+            # Hybrid search: combine text and vector search
+            text_results = self.search_manga_works(search_term, limit // 2)
+            vector_results = self.search_by_vector(embedding, limit=limit // 2)
+
+            # Combine results and deduplicate
+            combined_results = {}
+
+            # Add text results with lower score
+            for work in text_results:
+                combined_results[work["work_id"]] = {**work, "search_score": 0.5}
+
+            # Add vector results with higher score
+            for work in vector_results:
+                work_id = work["work_id"]
+                if work_id in combined_results:
+                    # Boost score for works found in both searches
+                    combined_results[work_id]["search_score"] = 0.8 + work.get("similarity_score", 0) * 0.2
+                else:
+                    combined_results[work_id] = {**work, "search_score": work.get("similarity_score", 0)}
+
+            # Sort by score and return
+            sorted_results = sorted(combined_results.values(), key=lambda x: x.get("search_score", 0), reverse=True)
+            return sorted_results[:limit]
+
+        elif embedding:
+            # Vector search only
+            return self.search_by_vector(embedding, limit=limit)
+        elif search_term:
+            # Text search only
+            return self.search_manga_works(search_term, limit)
+        else:
+            return []
+
     def search_manga_works(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Search for manga works by title, grouping by series"""
         logger.info(f"Searching for manga works with term: '{search_term}', limit: {limit}")
-
         with self.driver.session() as session:
             # First, get all matching works and publications
             query = """
@@ -527,7 +683,7 @@ class Neo4jMangaRepository:
                 if creator:
                     normalized_creators = normalize_and_split_creators(creator)
                     all_creators_for_publication.extend(normalized_creators)
-            
+
             # Create individual author nodes for each creator
             for normalized_creator in all_creators_for_publication:
                 if normalized_creator:
@@ -590,7 +746,7 @@ class Neo4jMangaRepository:
                     # Split multiple creators and normalize each one
                     normalized_creators = normalize_and_split_creators(creator)
                     all_creators_for_work.extend(normalized_creators)
-            
+
             # Create individual author nodes for each creator
             for normalized_creator in all_creators_for_work:
                 if normalized_creator:
@@ -751,7 +907,7 @@ class Neo4jMangaRepository:
                             # Split multiple creators and normalize each one
                             normalized_creators = normalize_and_split_creators(creator)
                             all_creators_for_related_work.extend(normalized_creators)
-                    
+
                     # Create individual author nodes for each creator
                     for normalized_creator in all_creators_for_related_work:
                         if normalized_creator:
@@ -872,7 +1028,7 @@ class Neo4jMangaRepository:
                             # Split multiple creators and normalize each one
                             normalized_creators = normalize_and_split_creators(creator)
                             all_creators_for_period_work.extend(normalized_creators)
-                    
+
                     # Create individual author nodes for each creator
                     for normalized_creator in all_creators_for_period_work:
                         if normalized_creator:

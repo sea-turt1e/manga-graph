@@ -197,7 +197,7 @@ cython_debug/
 .python-version
 
 # Media Arts Database files (large datasets)
-data/mediaarts/
+data/*
 *.zip
 *.json
 !data/mediaarts/.gitkeep

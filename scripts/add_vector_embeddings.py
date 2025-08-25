@@ -82,37 +82,6 @@ def generate_openai_embedding(text: str, api_key: str) -> List[float]:
         return generate_embedding_from_text(text)
 
 
-def generate_huggingface_embedding(text: str) -> List[float]:
-    """
-    Generate embedding using Hugging Face sentence-transformers (optional)
-    """
-    try:
-        import torch
-        from sentence_transformers import SentenceTransformer
-
-        # Load model (cached after first use)
-        device = "mps" if torch.backends.mps.is_available() else "cpu"
-        model = SentenceTransformer("cl-nagoya/ruri-v3-310m", device=device)
-        embedding = model.encode(text, convert_to_tensor=True)
-
-        # Pad or truncate to 1536 dimensions
-        if len(embedding) < 1536:
-            # Pad with zeros
-            padded = [0.0] * 1536
-            padded[: len(embedding)] = embedding.tolist()
-            return padded
-        else:
-            # Truncate
-            return embedding[:1536].tolist()
-
-    except ImportError:
-        logger.warning("sentence-transformers not installed. Install with: pip install sentence-transformers")
-        return generate_embedding_from_text(text)
-    except Exception as e:
-        logger.error(f"Hugging Face model error: {e}")
-        return generate_embedding_from_text(text)
-
-
 class BatchEmbeddingProcessor:
     """Batch processor for adding embeddings to all works"""
 
@@ -130,8 +99,26 @@ class BatchEmbeddingProcessor:
         )
         self.embedding_method = embedding_method
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self._huggingface_model = None  # キャッシュ用
 
         logger.info(f"Initialized with embedding method: {embedding_method}")
+
+    def _get_huggingface_model(self):
+        """Get or initialize the Hugging Face model (cached)"""
+        if self._huggingface_model is None:
+            try:
+                import torch
+                from sentence_transformers import SentenceTransformer
+
+                logger.info("Loading Hugging Face model (this may take a while for first time)...")
+                device = "mps" if torch.backends.mps.is_available() else "cpu"
+                self._huggingface_model = SentenceTransformer("cl-nagoya/ruri-v3-310m", device=device)
+                logger.info(f"Hugging Face model loaded on {device}")
+            except Exception as e:
+                logger.error(f"Failed to load Hugging Face model: {e}")
+                self._huggingface_model = None
+
+        return self._huggingface_model
 
     def setup_vector_indexes(self):
         """Create vector indexes for all node types"""
@@ -208,8 +195,33 @@ class BatchEmbeddingProcessor:
         if self.embedding_method == "openai" and self.openai_api_key:
             return generate_openai_embedding(text, self.openai_api_key)
         elif self.embedding_method == "huggingface":
-            return generate_huggingface_embedding(text)
+            return self._generate_huggingface_embedding(text)
         else:
+            return generate_embedding_from_text(text)
+
+    def _generate_huggingface_embedding(self, text: str) -> List[float]:
+        """Generate embedding using cached Hugging Face model"""
+        try:
+            model = self._get_huggingface_model()
+            if model is None:
+                raise ValueError("Hugging Face model not available")
+
+            # Generate embedding
+            embedding = model.encode(text, convert_to_tensor=True)
+            embedding_list = embedding.tolist()
+
+            # Pad or truncate to 1536 dimensions to match Neo4j index
+            if len(embedding_list) < 1536:
+                # Pad with zeros
+                padded = [0.0] * 1536
+                padded[: len(embedding_list)] = embedding_list
+                return padded
+            else:
+                # Truncate if longer than 1536
+                return embedding_list[:1536]
+
+        except Exception as e:
+            logger.error(f"Hugging Face embedding generation error: {e}")
             return generate_embedding_from_text(text)
 
     def add_embeddings_to_works(self, works: List[Dict[str, Any]], batch_size: int = 100):

@@ -28,8 +28,17 @@ def clean_title(title: str) -> str:
 
     # Remove extra whitespace and normalize
     title = title.strip()
-    # You can add more normalization rules here if needed
-    return title
+
+    # Remove common punctuation and symbols that might cause mismatches
+    import re
+
+    # Remove ～, 〜, -, !, ?, spaces, and other common punctuation
+    title = re.sub(r"[～〜\-!?！？\s]+", "", title)
+
+    # Remove parentheses and their contents (often contain extra info)
+    title = re.sub(r"[\(（].*?[\)）]", "", title)
+
+    return title.strip()
 
 
 def load_manga_csv(csv_path: str) -> List[dict]:
@@ -66,45 +75,88 @@ def load_manga_csv(csv_path: str) -> List[dict]:
         return []
 
 
-def find_matching_works(repository: Neo4jMangaRepository, manga_data: List[dict]) -> List[dict]:
+def find_matching_works(
+    repository: Neo4jMangaRepository, manga_data: List[dict], is_preview: bool = False
+) -> List[dict]:
     """Find matching works in Neo4j database"""
     matches = []
 
     logger.info("Finding matching works in Neo4j database...")
 
     with repository.driver.session() as session:
-        for manga in manga_data:
-            title_japanese = manga["title_japanese"]
+        from tqdm import tqdm
 
-            # Try exact match first
+        if is_preview:
+            manga_data = manga_data[:100]  # Limit to first 20 entries for preview
+        for manga in tqdm(manga_data):
+            title_japanese = manga["title_japanese"]
+            cleaned_title = clean_title(title_japanese)
+
+            # Try exact match first (with both original and cleaned titles)
             query = """
             MATCH (w:Work)
-            WHERE w.title = $title
+            WHERE w.title = $title OR w.title = $cleaned_title
             RETURN w.id as work_id, w.title as title
             LIMIT 1
             """
 
-            result = session.run(query, title=title_japanese)
+            result = session.run(query, title=title_japanese, cleaned_title=cleaned_title)
             record = result.single()
 
             if record:
                 matches.append({"work_id": record["work_id"], "neo4j_title": record["title"], "manga_data": manga})
                 logger.debug(f"Exact match found: {title_japanese} -> {record['work_id']}")
             else:
-                # Try partial match
+                # Try flexible matching with multiple approaches
                 query = """
                 MATCH (w:Work)
-                WHERE toLower(w.title) CONTAINS toLower($title) OR toLower($title) CONTAINS toLower(w.title)
-                RETURN w.id as work_id, w.title as title
+                WHERE (
+                    // Approach 1: Cleaned vs cleaned comparison (remove spaces from both)
+                    (replace(toLower(w.title), ' ', '') = replace(toLower($title), ' ', ''))
+                    OR
+                    // Approach 2: Original contains cleaned (for "ONE PIECE" contains "ONEPIECE")
+                    (toLower(w.title) CONTAINS toLower($cleaned_title) AND size($cleaned_title) >= 5)
+                    OR
+                    // Approach 3: Cleaned contains original (for "ONEPIECE" contains "ONE PIECE")
+                    (toLower($cleaned_title) CONTAINS toLower(w.title) AND size(w.title) >= 5)
+                )
+                // Ensure reasonable similarity
+                AND (
+                    abs(size(replace(w.title, ' ', '')) - size(replace($title, ' ', ''))) <= 3
+                )
+                RETURN w.id as work_id, w.title as title,
+                       size(replace(w.title, ' ', '')) as neo4j_length_clean,
+                       size(replace($title, ' ', '')) as csv_length_clean
+                ORDER BY abs(size(replace(w.title, ' ', '')) - size(replace($title, ' ', ''))) ASC
                 LIMIT 1
                 """
 
-                result = session.run(query, title=title_japanese)
+                result = session.run(query, title=title_japanese, cleaned_title=cleaned_title)
                 record = result.single()
 
                 if record:
-                    matches.append({"work_id": record["work_id"], "neo4j_title": record["title"], "manga_data": manga})
-                    logger.debug(f"Partial match found: {title_japanese} -> {record['title']} ({record['work_id']})")
+                    # Additional validation: check if the match makes sense
+                    neo4j_title = record["title"]
+                    neo4j_length_clean = record["neo4j_length_clean"]
+                    csv_length_clean = record["csv_length_clean"]
+
+                    # Allow reasonable length differences
+                    if neo4j_length_clean > 0 and csv_length_clean > 0:
+                        length_ratio = max(neo4j_length_clean, csv_length_clean) / min(
+                            neo4j_length_clean, csv_length_clean
+                        )
+
+                        if length_ratio <= 1.8:  # More lenient for titles like "ONE PIECE"
+                            matches.append(
+                                {"work_id": record["work_id"], "neo4j_title": neo4j_title, "manga_data": manga}
+                            )
+                            logger.debug(
+                                f"Flexible match found: {title_japanese} -> {neo4j_title} ({record['work_id']})"
+                            )
+                        else:
+                            logger.debug(
+                                f"Rejected match (length ratio {length_ratio:.1f}): {title_japanese} -> {neo4j_title}"
+                            )
 
     logger.info(f"Found {len(matches)} matching works")
     return matches
@@ -122,9 +174,15 @@ def update_works_with_synopsis(
     # Initialize embedding processor if embeddings are requested
     embedding_processor = None
     if create_embeddings:
-        from scripts.add_vector_embeddings import BatchEmbeddingProcessor
+        from domain.services.batch_embedding_processor import BatchEmbeddingProcessor
 
-        embedding_processor = BatchEmbeddingProcessor(embedding_method=embedding_method)
+        # Create processor with specified model
+        if embedding_method == "huggingface":
+            embedding_processor = BatchEmbeddingProcessor(
+                sentence_transformer_model="sentence-transformers/all-mpnet-base-v2"
+            )
+        else:
+            embedding_processor = BatchEmbeddingProcessor()
 
     success_count = 0
     error_count = 0
@@ -209,7 +267,7 @@ def update_works_with_synopsis(
 
     # Clean up embedding processor
     if embedding_processor:
-        embedding_processor.close()
+        embedding_processor.cleanup()
 
 
 def create_synopsis_vector_index(repository: Neo4jMangaRepository):
@@ -296,14 +354,14 @@ def main():
             return
 
         # Find matching works
-        matches = find_matching_works(repository, manga_data)
+        matches = find_matching_works(repository, manga_data, is_preview=args.preview)
         if not matches:
             logger.warning("No matching works found")
             return
 
         # Preview matches
         logger.info("\n=== Preview of matches ===")
-        for i, match in enumerate(matches[:10]):  # Show first 10
+        for i, match in enumerate(matches[:100]):  # Show first 100
             manga_data = match["manga_data"]
             logger.info(f"{i + 1}. {manga_data['title_japanese']} -> {match['neo4j_title']}")
             logger.info(f"   Work ID: {match['work_id']}")
@@ -315,12 +373,6 @@ def main():
 
         if args.preview:
             logger.info("Preview mode - no updates performed")
-            return
-
-        # Confirm before proceeding
-        response = input(f"\nProceed to update {len(matches)} works? (y/N): ")
-        if response.lower() != "y":
-            logger.info("Update cancelled")
             return
 
         # Update works with synopsis data

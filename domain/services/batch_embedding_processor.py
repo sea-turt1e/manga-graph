@@ -13,42 +13,42 @@ from infrastructure.external.neo4j_repository import Neo4jMangaRepository
 logger = logging.getLogger(__name__)
 
 
-# def generate_embedding_from_text(text: str, dimension: int = 1536) -> List[float]:
-#     """
-#     Generate embedding from text using hash-based approach.
+def generate_embedding_from_text(text: str, dimension: int = 1536) -> List[float]:
+    """
+    Generate embedding from text using hash-based approach.
 
-#     This is a fallback method when other embedding methods are not available.
-#     """
-#     import hashlib
+    This is a fallback method when other embedding methods are not available.
+    """
+    import hashlib
 
-#     # Create a more sophisticated hash-based embedding
-#     hash_input = text.encode("utf-8")
+    # Create a more sophisticated hash-based embedding
+    hash_input = text.encode("utf-8")
 
-#     # Use multiple hash functions for better distribution
-#     hashes = []
-#     for i in range(6):  # Use 6 different hash functions
-#         hash_obj = hashlib.sha256(hash_input + str(i).encode())
-#         hash_hex = hash_obj.hexdigest()
-#         hashes.append(hash_hex)
+    # Use multiple hash functions for better distribution
+    hashes = []
+    for i in range(6):  # Use 6 different hash functions
+        hash_obj = hashlib.sha256(hash_input + str(i).encode())
+        hash_hex = hash_obj.hexdigest()
+        hashes.append(hash_hex)
 
-#     # Generate 1536-dimensional vector
-#     embedding = []
-#     combined_hash = "".join(hashes)
+    # Generate 1536-dimensional vector
+    embedding = []
+    combined_hash = "".join(hashes)
 
-#     for i in range(dimension):
-#         # Use hash characters cyclically
-#         char_index = i % len(combined_hash)
-#         # Convert hex character to value and normalize
-#         if combined_hash[char_index].isdigit():
-#             value = int(combined_hash[char_index]) / 15.0 - 0.5
-#         else:
-#             value = (ord(combined_hash[char_index]) - ord("a") + 10) / 15.0 - 0.5
+    for i in range(dimension):
+        # Use hash characters cyclically
+        char_index = i % len(combined_hash)
+        # Convert hex character to value and normalize
+        if combined_hash[char_index].isdigit():
+            value = int(combined_hash[char_index]) / 15.0 - 0.5
+        else:
+            value = (ord(combined_hash[char_index]) - ord("a") + 10) / 15.0 - 0.5
 
-#         # Add some variation based on position
-#         value += (i % 100) / 10000.0 - 0.005
-#         embedding.append(value)
+        # Add some variation based on position
+        value += (i % 100) / 10000.0 - 0.005
+        embedding.append(value)
 
-#     return embedding
+    return embedding
 
 
 def generate_openai_embedding(text: str, api_key: str) -> List[float]:

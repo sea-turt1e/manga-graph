@@ -5,7 +5,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from neo4j import GraphDatabase
 
-from presentation.api import cover_router, image_router, manga_router, media_arts_router, neo4j_router
+from presentation.api import (
+    cover_router,
+    image_router,
+    manga_router,
+    media_arts_router,
+    neo4j_router,
+    text_generation_router,
+)
 
 load_dotenv()
 
@@ -38,6 +45,7 @@ app.include_router(media_arts_router)
 app.include_router(neo4j_router)
 app.include_router(cover_router)
 app.include_router(image_router)
+app.include_router(text_generation_router)
 
 
 @app.get("/")

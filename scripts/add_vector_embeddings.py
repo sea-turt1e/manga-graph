@@ -23,7 +23,9 @@ def main():
     logger.info("Starting vector embeddings addition process...")
 
     # You can specify the model here
-    processor = BatchEmbeddingProcessor(sentence_transformer_model="cl-nagoya/ruri-v3-310m")
+    processor = BatchEmbeddingProcessor(
+        embedding_method="huggingface", sentence_transformer_model="cl-nagoya/ruri-v3-310m"
+    )
 
     try:
         # Setup vector indexes

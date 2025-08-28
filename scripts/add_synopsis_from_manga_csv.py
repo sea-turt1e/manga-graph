@@ -166,7 +166,7 @@ def update_works_with_synopsis(
     repository: Neo4jMangaRepository,
     matches: List[dict],
     create_embeddings: bool = True,
-    embedding_method: str = "hash",
+    embedding_method: str = "huggingface",
 ):
     """Update Neo4j works with synopsis data and embeddings"""
     logger.info(f"Updating {len(matches)} works with synopsis data...")
@@ -198,7 +198,8 @@ def update_works_with_synopsis(
                 synopsis_embedding = None
                 if create_embeddings and embedding_processor:
                     synopsis_embedding = embedding_processor.generate_embedding(
-                        synopsis
+                        synopsis,
+                        dimension=768 if embedding_method == "huggingface" else 1536,
                     )  # Update work with synopsis and optional embedding
                 if synopsis_embedding:
                     query = """
@@ -276,7 +277,7 @@ def create_synopsis_vector_index(repository: Neo4jMangaRepository):
 
     try:
         repository.create_vector_index(
-            label="Work", property_name="synopsis_embedding", dimension=1536, similarity="cosine"
+            label="Work", property_name="synopsis_embedding", dimension=768, similarity="cosine"
         )
         logger.info("Synopsis vector index created successfully")
     except Exception as e:
@@ -312,7 +313,7 @@ def main():
     parser.add_argument("csv_path", nargs="?", help="Path to manga.csv file")
     parser.add_argument("--no-embeddings", action="store_true", help="Skip creating embeddings")
     parser.add_argument(
-        "--method", choices=["hash", "openai", "huggingface"], default="hash", help="Embedding generation method"
+        "--method", choices=["hash", "openai", "huggingface"], default="huggingface", help="Embedding generation method"
     )
     parser.add_argument("--create-index", action="store_true", help="Create vector index for synopsis embeddings")
     parser.add_argument("--preview", action="store_true", help="Preview matches without updating")

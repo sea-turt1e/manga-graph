@@ -48,7 +48,7 @@ class Neo4jMangaRepository:
             self.driver.close()
 
     def create_vector_index(
-        self, label: str, property_name: str = "embedding", dimension: int = 1536, similarity: str = "cosine"
+        self, label: str, property_name: str = "embedding", dimension: int = 768, similarity: str = "cosine"
     ):
         """Create a vector index for semantic search"""
         logger.info(
@@ -116,8 +116,8 @@ class Neo4jMangaRepository:
             try:
                 index_name = f"{label}_{property_name}_vector_index"
                 result = session.run(query, index_name=index_name, limit=limit, embedding=embedding)
+                # result = session.run(query, limit=limit, embedding=embedding)
                 works = []
-
                 for record in result:
                     work = {
                         "work_id": record["work_id"],

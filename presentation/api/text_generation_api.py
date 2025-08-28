@@ -28,8 +28,7 @@ async def generate_text(
             async for chunk in use_case.execute(
                 text=request.text, max_tokens=request.max_tokens, temperature=request.temperature, model=request.model
             ):
-                yield f"data: {chunk}\n\n"
-            # yield "data: [DONE]\n\n"
+                yield f"{chunk}\n\n"
 
         return StreamingResponse(
             generate_stream(),

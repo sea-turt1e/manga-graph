@@ -11,6 +11,7 @@
 
 ## 機能
 - 📊 漫画グラフデータの提供（Neo4j）
+- 🤖 OpenAI APIを使用したテキスト生成（ストリーミング対応）
 <!-- - ToBe
   - 📚 作品検索API
   - 👨‍🎨 作者と作品の関係性データ提供
@@ -45,7 +46,16 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
-### 3. データの準備と投入
+### 3. 環境変数の設定
+```bash
+# .envファイルをコピーして設定
+cp .env.example .env
+
+# .envファイルを編集してOpenAI API Keyを設定
+# OPENAI_API_KEY=your_openai_api_key_here
+```
+
+### 4. データの準備と投入
 ```bash
 # メディア芸術データベースからデータをダウンロード
 python scripts/data_import/download_mediaarts_data.py

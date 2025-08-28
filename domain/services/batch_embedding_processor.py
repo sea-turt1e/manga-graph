@@ -13,42 +13,42 @@ from infrastructure.external.neo4j_repository import Neo4jMangaRepository
 logger = logging.getLogger(__name__)
 
 
-def generate_embedding_from_text(text: str) -> List[float]:
-    """
-    Generate embedding from text using hash-based approach.
+# def generate_embedding_from_text(text: str, dimension: int = 1536) -> List[float]:
+#     """
+#     Generate embedding from text using hash-based approach.
 
-    This is a fallback method when other embedding methods are not available.
-    """
-    import hashlib
+#     This is a fallback method when other embedding methods are not available.
+#     """
+#     import hashlib
 
-    # Create a more sophisticated hash-based embedding
-    hash_input = text.encode("utf-8")
+#     # Create a more sophisticated hash-based embedding
+#     hash_input = text.encode("utf-8")
 
-    # Use multiple hash functions for better distribution
-    hashes = []
-    for i in range(6):  # Use 6 different hash functions
-        hash_obj = hashlib.sha256(hash_input + str(i).encode())
-        hash_hex = hash_obj.hexdigest()
-        hashes.append(hash_hex)
+#     # Use multiple hash functions for better distribution
+#     hashes = []
+#     for i in range(6):  # Use 6 different hash functions
+#         hash_obj = hashlib.sha256(hash_input + str(i).encode())
+#         hash_hex = hash_obj.hexdigest()
+#         hashes.append(hash_hex)
 
-    # Generate 1536-dimensional vector
-    embedding = []
-    combined_hash = "".join(hashes)
+#     # Generate 1536-dimensional vector
+#     embedding = []
+#     combined_hash = "".join(hashes)
 
-    for i in range(1536):
-        # Use hash characters cyclically
-        char_index = i % len(combined_hash)
-        # Convert hex character to value and normalize
-        if combined_hash[char_index].isdigit():
-            value = int(combined_hash[char_index]) / 15.0 - 0.5
-        else:
-            value = (ord(combined_hash[char_index]) - ord("a") + 10) / 15.0 - 0.5
+#     for i in range(dimension):
+#         # Use hash characters cyclically
+#         char_index = i % len(combined_hash)
+#         # Convert hex character to value and normalize
+#         if combined_hash[char_index].isdigit():
+#             value = int(combined_hash[char_index]) / 15.0 - 0.5
+#         else:
+#             value = (ord(combined_hash[char_index]) - ord("a") + 10) / 15.0 - 0.5
 
-        # Add some variation based on position
-        value += (i % 100) / 10000.0 - 0.005
-        embedding.append(value)
+#         # Add some variation based on position
+#         value += (i % 100) / 10000.0 - 0.005
+#         embedding.append(value)
 
-    return embedding
+#     return embedding
 
 
 def generate_openai_embedding(text: str, api_key: str) -> List[float]:
@@ -75,7 +75,7 @@ class BatchEmbeddingProcessor:
 
     def __init__(
         self,
-        embedding_method: str = "hash",
+        embedding_method: str = "huggingface",
         sentence_transformer_model: str = "",
         neo4j_uri: str = None,
         neo4j_user: str = None,
@@ -124,21 +124,21 @@ class BatchEmbeddingProcessor:
 
         return self._huggingface_model
 
-    def setup_vector_indexes(self):
+    def setup_vector_indexes(self, dimension: int = 768):
         """Create vector indexes for all node types"""
         logger.info("Creating vector indexes...")
 
         # Work nodes (most important)
-        self.repository.create_vector_index("Work", "embedding", 1536, "cosine")
+        self.repository.create_vector_index("Work", "embedding", dimension, "cosine")
 
         # Author nodes (for author similarity)
-        self.repository.create_vector_index("Author", "embedding", 1536, "cosine")
+        self.repository.create_vector_index("Author", "embedding", dimension, "cosine")
 
         # Magazine nodes (for magazine similarity)
-        self.repository.create_vector_index("Magazine", "embedding", 1536, "cosine")
+        self.repository.create_vector_index("Magazine", "embedding", dimension, "cosine")
 
         # Publisher nodes (for publisher similarity)
-        self.repository.create_vector_index("Publisher", "embedding", 1536, "cosine")
+        self.repository.create_vector_index("Publisher", "embedding", dimension, "cosine")
 
         logger.info("Vector indexes created successfully")
 
@@ -194,16 +194,16 @@ class BatchEmbeddingProcessor:
             logger.info(f"Found {len(authors)} authors without embeddings")
             return authors
 
-    def generate_embedding(self, text: str) -> List[float]:
+    def generate_embedding(self, text: str, dimension: int = 768) -> List[float]:
         """Generate embedding based on selected method"""
         if self.embedding_method == "openai" and self.openai_api_key:
             return generate_openai_embedding(text, self.openai_api_key)
         elif self.embedding_method == "huggingface":
-            return self._generate_huggingface_embedding(text)
+            return self._generate_huggingface_embedding(text, dimension)
         else:
             return generate_embedding_from_text(text)
 
-    def _generate_huggingface_embedding(self, text: str) -> List[float]:
+    def _generate_huggingface_embedding(self, text: str, dimension: int = 768) -> List[float]:
         """Generate embedding using cached Hugging Face model"""
         try:
             model = self._get_huggingface_model()
@@ -214,15 +214,15 @@ class BatchEmbeddingProcessor:
             embedding = model.encode(text, convert_to_tensor=True)
             embedding_list = embedding.tolist()
 
-            # Pad or truncate to 1536 dimensions to match Neo4j index
-            if len(embedding_list) < 1536:
+            # Pad or truncate to dimensions to match Neo4j index
+            if len(embedding_list) < dimension:
                 # Pad with zeros
-                padded = [0.0] * 1536
+                padded = [0.0] * dimension
                 padded[: len(embedding_list)] = embedding_list
                 return padded
             else:
-                # Truncate if longer than 1536
-                return embedding_list[:1536]
+                # Truncate if longer than dimension
+                return embedding_list[:dimension]
 
         except Exception as e:
             logger.error(f"Hugging Face embedding generation error: {e}")

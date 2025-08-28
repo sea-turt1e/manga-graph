@@ -3,6 +3,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from domain.services import MediaArtsDataService
+from domain.services.batch_embedding_processor import BatchEmbeddingProcessor
 from domain.services.cover_cache_service import get_cache_service
 from domain.services.cover_image_service import get_cover_service
 from domain.services.image_fetch_service import ImageFetchService, get_image_fetch_service
@@ -30,6 +31,13 @@ from presentation.schemas import (
 router = APIRouter(prefix="/api/v1", tags=["manga"])
 media_arts_router = APIRouter(prefix="/api/v1/media-arts", tags=["media-arts"])
 neo4j_router = APIRouter(prefix="/api/v1/neo4j", tags=["neo4j-fast"])
+# BatchEmbeddingProcessorを使って埋め込みを生成
+
+
+ruri_processor = BatchEmbeddingProcessor(
+    embedding_method="huggingface",
+    sentence_transformer_model="cl-nagoya/ruri-v3-310m",
+)
 
 
 def get_manga_repository():
@@ -994,6 +1002,107 @@ async def batch_add_embeddings(
             "success_count": success_count,
             "failed_count": failed_count,
         }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@neo4j_router.get("/search-fuzzy", response_model=GraphResponse)
+async def search_manga_fuzzy(
+    q: str = Query(..., description="曖昧検索のクエリテキスト"),
+    limit: int = Query(10, description="結果の上限"),
+    similarity_threshold: float = Query(0.5, description="類似度の閾値（0.0-1.0）"),
+    embedding_method: str = Query("huggingface", description="埋め込み生成方法（hash, huggingface, openai）"),
+    neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
+):
+    """Neo4jのembedding列を使った漫画タイトルの曖昧検索"""
+    try:
+        if neo4j_service is None or neo4j_service.neo4j_repository is None:
+            raise HTTPException(status_code=503, detail="Neo4j service not available")
+
+        # BatchEmbeddingProcessorを使って埋め込みを生成
+        from domain.services.batch_embedding_processor import BatchEmbeddingProcessor
+
+        processor = BatchEmbeddingProcessor(
+            embedding_method=embedding_method,
+            sentence_transformer_model="cl-nagoya/ruri-v3-310m" if embedding_method == "huggingface" else "",
+        )
+
+        # クエリテキストの埋め込みを生成
+        query_embedding = processor.generate_embedding(q)
+
+        # ベクトル検索を実行
+        search_results = neo4j_service.neo4j_repository.search_by_vector(
+            embedding=query_embedding,
+            label="Work",
+            property_name="embedding",
+            limit=limit * 2,  # 閾値フィルタリング前に多めに取得
+        )
+
+        # 類似度でフィルタリング
+        filtered_results = [
+            result for result in search_results if result.get("similarity_score", 0) >= similarity_threshold
+        ][:limit]
+
+        # GraphResponse形式に変換
+        nodes = []
+        edges = []
+
+        for work in filtered_results:
+            node = {
+                "id": work["work_id"],
+                "label": work["title"],
+                "type": "work",
+                "properties": {
+                    "title": work["title"],
+                    "creators": work.get("creators", []),
+                    "publishers": work.get("publishers", []),
+                    "magazines": work.get("magazines", []),
+                    "genre": work.get("genre"),
+                    "isbn": work.get("isbn"),
+                    "volume": work.get("volume"),
+                    "published_date": work.get("published_date"),
+                    "first_published": work.get("first_published"),
+                    "last_published": work.get("last_published"),
+                    "series_id": work.get("series_id"),
+                    "series_name": work.get("series_name"),
+                    "similarity_score": work.get("similarity_score"),
+                    "source": "neo4j-vector",
+                    "search_query": q,
+                    "embedding_method": embedding_method,
+                },
+            }
+            nodes.append(node)
+
+            # 作者との関係を表現
+            for creator in work.get("creators", []):
+                if creator:
+                    # 作者ノード
+                    author_id = f"author_{creator}"
+                    author_node = {
+                        "id": author_id,
+                        "label": creator,
+                        "type": "author",
+                        "properties": {
+                            "name": creator,
+                            "source": "neo4j-vector",
+                        },
+                    }
+                    # 重複チェック（IDベース）
+                    if not any(node["id"] == author_id for node in nodes):
+                        nodes.append(author_node)
+
+                    # 関係
+                    edge = {
+                        "id": f"{work['work_id']}_created_by_{creator}",
+                        "source": work["work_id"],
+                        "target": author_id,
+                        "type": "CREATED_BY",
+                        "properties": {"relationship": "created_by"},
+                    }
+                    edges.append(edge)
+
+        return GraphResponse(nodes=nodes, edges=edges, total_nodes=len(nodes), total_edges=len(edges))
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

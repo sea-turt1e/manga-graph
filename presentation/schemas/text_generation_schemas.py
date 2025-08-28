@@ -10,6 +10,7 @@ class TextGenerationRequest(BaseModel):
     max_tokens: Optional[int] = Field(1000, description="最大トークン数", ge=1, le=4000)
     temperature: Optional[float] = Field(0.7, description="温度パラメータ", ge=0.0, le=2.0)
     model: Optional[str] = Field("gpt-4o-mini", description="使用するモデル")
+    streaming: Optional[bool] = Field(False, description="ストリーミングで返す場合は True。デフォルト False で一括返却")
 
 
 class TextGenerationResponse(BaseModel):

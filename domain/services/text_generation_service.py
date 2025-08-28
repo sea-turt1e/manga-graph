@@ -1,6 +1,6 @@
 import os
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator
+from typing import AsyncGenerator, List
 
 import openai
 from openai import AsyncOpenAI
@@ -15,6 +15,14 @@ class TextGenerationService(ABC):
     async def generate_text_stream(self, request: TextGenerationRequest) -> AsyncGenerator[str, None]:
         """ストリーミングでテキストを生成する"""
         pass
+
+    async def generate_text(self, request: TextGenerationRequest) -> str:
+        """非ストリーミングで全文を取得 (デフォルト実装はストリーム集約)"""
+        chunks: List[str] = []
+        async for c in self.generate_text_stream(request):
+            if c:
+                chunks.append(c)
+        return "".join(chunks)
 
 
 class OpenAITextGenerationService(TextGenerationService):

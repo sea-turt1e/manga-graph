@@ -13,6 +13,9 @@ from .manga_schemas import (
     MagazineResponse,
     NodeData,
     SearchRequest,
+    SynopsisVectorSearchRequest,
+    SynopsisVectorSearchResponse,
+    SynopsisVectorSearchResponseItem,
     VectorIndexRequest,
     VectorSearchRequest,
     WorkResponse,
@@ -36,4 +39,7 @@ __all__ = [
     "VectorSearchRequest",
     "VectorIndexRequest",
     "AddEmbeddingRequest",
+    "SynopsisVectorSearchRequest",
+    "SynopsisVectorSearchResponse",
+    "SynopsisVectorSearchResponseItem",
 ]

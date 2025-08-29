@@ -23,6 +23,9 @@ from presentation.schemas import (
     ImageFetchResponse,
     MagazineResponse,
     SearchRequest,
+    SynopsisVectorSearchRequest,
+    SynopsisVectorSearchResponse,
+    SynopsisVectorSearchResponseItem,
     VectorIndexRequest,
     VectorSearchRequest,
     WorkResponse,
@@ -121,6 +124,42 @@ async def search_manga(
             nodes=unique_nodes, edges=unique_edges, total_nodes=len(unique_nodes), total_edges=len(unique_edges)
         )
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@neo4j_router.post("/vector/search/synopsis", response_model=SynopsisVectorSearchResponse)
+async def synopsis_vector_search(
+    request: SynopsisVectorSearchRequest,
+    neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
+):
+    """Work.synopsis_embedding を利用した synopsis 類似検索 (title と synopsis を上位 n 件返却)"""
+    try:
+        if neo4j_service is None or neo4j_service.neo4j_repository is None:
+            raise HTTPException(status_code=503, detail="Neo4j service not available")
+        if not request.work_id:
+            raise HTTPException(status_code=400, detail="work_id is required")
+
+        # 基準となる Work ノードの synopsis_embedding を取得
+        with neo4j_service.neo4j_repository.driver.session() as session:
+            fetch_query = """
+            MATCH (w:Work {id: $work_id})
+            RETURN w.synopsis_embedding AS embedding
+            """
+            record = session.run(fetch_query, work_id=request.work_id).single()
+            if record is None or record.get("embedding") is None:
+                raise HTTPException(status_code=404, detail="Synopsis embedding not found for given work_id")
+            query_embedding = record["embedding"]
+
+        raw_results = neo4j_service.neo4j_repository.search_work_synopsis_by_vector(
+            embedding=query_embedding, limit=request.limit
+        )
+        # 自分自身のノードが結果に含まれる場合、先頭に来ることが多いのでそのまま残すか除外するか判断
+        # 現状: 残す（利用側で必要なら除外可能）
+        items = [SynopsisVectorSearchResponseItem(**r) for r in raw_results]
+        return SynopsisVectorSearchResponse(results=items, total=len(items))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

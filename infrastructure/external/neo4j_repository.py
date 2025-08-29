@@ -144,6 +144,43 @@ class Neo4jMangaRepository:
                 logger.error(f"Vector search failed: {e}")
                 return []
 
+    def search_work_synopsis_by_vector(
+        self, embedding: List[float], limit: int = 10, label: str = "Work", property_name: str = "synopsis_embedding"
+    ) -> List[Dict[str, Any]]:
+        """Search Work nodes by synopsis embedding similarity and return title + synopsis.
+
+        Expects a vector index to have been created beforehand for Work.synopsis_embedding via
+        create_vector_index(label="Work", property_name="synopsis_embedding", ...).
+        """
+        logger.info(
+            f"Searching by synopsis embedding similarity for {label} nodes (property: {property_name}), limit: {limit}"
+        )
+        with self.driver.session() as session:
+            query = """
+            CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
+            YIELD node, score
+            RETURN node.id as work_id, node.title as title, node.synopsis as synopsis, score
+            ORDER BY score DESC
+            """
+            try:
+                index_name = f"{label}_{property_name}_vector_index"
+                result = session.run(query, index_name=index_name, limit=limit, embedding=embedding)
+                works: List[Dict[str, Any]] = []
+                for record in result:
+                    works.append(
+                        {
+                            "work_id": record["work_id"],
+                            "title": record["title"],
+                            "synopsis": record.get("synopsis"),
+                            "similarity_score": record["score"],
+                        }
+                    )
+                logger.info(f"Found {len(works)} works by synopsis embedding similarity")
+                return works
+            except Exception as e:
+                logger.error(f"Synopsis vector search failed: {e}")
+                return []
+
     def add_embedding_to_work(self, work_id: str, embedding: List[float]):
         """Add embedding vector to a work node"""
         logger.info(f"Adding embedding to work: {work_id}")

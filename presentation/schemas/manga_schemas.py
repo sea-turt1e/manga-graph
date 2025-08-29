@@ -33,6 +33,23 @@ class VectorSearchRequest(BaseModel):
     use_hybrid: Optional[bool] = True  # Whether to combine text and vector search
 
 
+class SynopsisVectorSearchRequest(BaseModel):
+    work_id: str  # 検索クエリの基準となる Work ノード ID
+    limit: Optional[int] = 10
+
+
+class SynopsisVectorSearchResponseItem(BaseModel):
+    work_id: str
+    title: Optional[str] = None
+    synopsis: Optional[str] = None
+    similarity_score: Optional[float] = None
+
+
+class SynopsisVectorSearchResponse(BaseModel):
+    results: List[SynopsisVectorSearchResponseItem]
+    total: int
+
+
 class VectorIndexRequest(BaseModel):
     label: str
     property_name: Optional[str] = "embedding"

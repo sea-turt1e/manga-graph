@@ -1,3 +1,4 @@
+import json
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -37,7 +38,7 @@ async def generate_text(
                     temperature=request.temperature,
                     model=request.model,
                 ):
-                    yield f"{chunk}\n\n"
+                    yield f"data: {json.dumps({'text': chunk})}\n\n"
 
             return StreamingResponse(
                 generate_stream(),

@@ -735,6 +735,9 @@ class Neo4jMangaRepository:
         # Also search for publications (magazine serializations)
         publications = self.search_manga_publications(search_term, limit)
 
+        # メイン作品IDを保持（related 並び替え時に先頭固定）
+        main_work_ids = {w["work_id"] for w in main_works}
+
         if not main_works and not publications:
             logger.warning(f"No works or publications found for search term: '{search_term}'")
             return {"nodes": [], "edges": []}
@@ -1161,6 +1164,29 @@ class Neo4jMangaRepository:
                                 edges.append(edge)
                                 edge_ids_seen.add(edge_id)
 
+            # --- Related works 並び替え (メイン作品を先頭に保持) ---
+            if sort_total_volumes in ("asc", "desc"):
+
+                def _extract_total_from_node(n: Dict[str, Any]) -> int:
+                    props = n.get("properties", n.get("data", {})) or {}
+                    tv = props.get("total_volumes") or props.get("work_count") or 0
+                    try:
+                        return int(tv)
+                    except Exception:
+                        import re
+
+                        m = re.search(r"(\d+)", str(tv))
+                        return int(m.group(1)) if m else 0
+
+                # 順番保持: 既存 nodes からメイン -> related 分離
+                main_nodes_in_order = [n for n in nodes if n.get("id") in main_work_ids]
+                related_nodes = [n for n in nodes if n.get("id") not in main_work_ids]
+
+                reverse = sort_total_volumes == "desc"
+                related_nodes.sort(key=_extract_total_from_node, reverse=reverse)
+
+                nodes = main_nodes_in_order + related_nodes
+
         # Final deduplication to ensure no duplicate nodes exist
         unique_nodes = []
         seen_work_titles = {}  # For work nodes, track by title to avoid duplicates
@@ -1293,10 +1319,26 @@ class Neo4jMangaRepository:
             else:
                 other_nodes.append(node)
 
-        # Sort related work nodes by relevance_score in descending order
-        work_nodes.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+        # Related works ordering: total_volumes if requested else relevance_score
+        def _extract_total_for_node(n: Dict[str, Any]) -> int:
+            props = n.get("properties", n.get("data", {})) or {}
+            tv = props.get("total_volumes") or props.get("work_count") or 0
+            try:
+                return int(tv)
+            except Exception:
+                import re
 
-        # Combine: main results first, then sorted related works, then other nodes
+                m = re.search(r"(\d+)", str(tv))
+                return int(m.group(1)) if m else 0
+
+        if sort_total_volumes in ("asc", "desc"):
+            reverse_tv = sort_total_volumes == "desc"
+            work_nodes.sort(key=_extract_total_for_node, reverse=reverse_tv)
+        else:
+            # fallback relevance ordering
+            work_nodes.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+
+        # Combine: main results first (original order), then ordered related works, then other nodes
         unique_nodes = main_work_nodes + work_nodes + other_nodes
 
         logger.info(

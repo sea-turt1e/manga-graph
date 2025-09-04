@@ -7,6 +7,8 @@ import logging
 import os
 import sys
 
+from dotenv import load_dotenv
+
 # Add the project root to the Python path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
@@ -17,6 +19,8 @@ from domain.services.batch_embedding_processor import BatchEmbeddingProcessor  #
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+load_dotenv()  # Load environment variables from .env file if present
+
 
 def main():
     """Main function to add vector embeddings to all works"""
@@ -24,7 +28,11 @@ def main():
 
     # You can specify the model here
     processor = BatchEmbeddingProcessor(
-        embedding_method="huggingface", sentence_transformer_model="cl-nagoya/ruri-v3-310m"
+        embedding_method="huggingface",
+        sentence_transformer_model="cl-nagoya/ruri-v3-310m",
+        neo4j_uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
+        neo4j_user=os.getenv("NEO4J_USER", "neo4j"),
+        neo4j_password=os.getenv("NEO4J_PASSWORD", "password"),
     )
 
     try:

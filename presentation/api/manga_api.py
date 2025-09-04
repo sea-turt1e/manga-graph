@@ -374,6 +374,11 @@ async def search_neo4j_fast(
         description="total_volumesでソート: 'asc' または 'desc'。未指定ならタイトル既定順",
         regex="^(asc|desc)$",
     ),
+    min_total_volumes: Optional[int] = Query(
+        None,
+        description="total_volumes がこの値以上の作品のみ表示（メイン + related）。メインで0件ならフィルタ無効化して再表示",
+        ge=1,
+    ),
     neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
 ):
     """Neo4jを使用した高速検索"""
@@ -383,6 +388,7 @@ async def search_neo4j_fast(
             limit=limit,
             include_related=include_related,
             sort_total_volumes=sort_total_volumes,
+            min_total_volumes=min_total_volumes,
         )
 
         return GraphResponse(

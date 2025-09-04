@@ -67,6 +67,7 @@ class Neo4jMediaArtsService:
         limit: int = 20,
         include_related: bool = True,
         sort_total_volumes: Optional[str] = None,
+        min_total_volumes: Optional[int] = None,
     ) -> Dict[str, List]:
         """
         Search manga data with related works using Neo4j
@@ -85,7 +86,11 @@ class Neo4jMediaArtsService:
 
         try:
             result = self.neo4j_repository.search_manga_data_with_related(
-                search_term, limit, include_related, sort_total_volumes=sort_total_volumes
+                search_term,
+                limit,
+                include_related,
+                sort_total_volumes=sort_total_volumes,
+                min_total_volumes=min_total_volumes,
             )
 
             if self.use_mock:

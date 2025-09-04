@@ -519,7 +519,8 @@ class Neo4jMangaRepository:
             query = """
             MATCH (w1:Work {id: $work_id})-[:CREATED_BY]->(a:Author)<-[:CREATED_BY]-(w2:Work)
             WHERE w1.id <> w2.id
-            RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
+         RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
+             w2.total_volumes as total_volumes,
                    a.name as author_name, 500 as relevance_score
             LIMIT $limit
             """
@@ -533,7 +534,8 @@ class Neo4jMangaRepository:
             query = """
             MATCH (w1:Work {id: $work_id})-[:PUBLISHED_IN]->(m:Magazine)<-[:PUBLISHED_IN]-(w2:Work)
             WHERE w1.id <> w2.id
-            RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
+         RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
+             w2.total_volumes as total_volumes,
                    m.title as magazine_name
             LIMIT $limit
             """
@@ -556,7 +558,8 @@ class Neo4jMangaRepository:
             WITH w1, w2, year1, toInteger(substring(w2.published_date, 0, 4)) as year2
             WHERE abs(year1 - year2) <= $year_range
             OPTIONAL MATCH (w2)-[:CREATED_BY]->(a:Author)
-            RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
+         RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
+             w2.total_volumes as total_volumes,
                    collect(DISTINCT a.name) as creators,
                    abs(year1 - year2) as year_diff, 100 as relevance_score
             ORDER BY year_diff ASC
@@ -625,6 +628,7 @@ class Neo4jMangaRepository:
             OPTIONAL MATCH (m)-[:PUBLISHED_BY]->(p:Publisher)
             RETURN w2.id as work_id, w2.title as title,
                    w2.first_published as first_published, w2.last_published as last_published,
+                   w2.total_volumes as total_volumes,
                    collect(DISTINCT a.name) as creators,
                    m.title as magazine_name,
                    p.name as publisher_name,
@@ -693,6 +697,7 @@ class Neo4jMangaRepository:
         limit: int = 20,
         include_related: bool = True,
         sort_total_volumes: Optional[str] = None,
+        min_total_volumes: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Search manga data and include related works for graph visualization"""
         logger.info(
@@ -700,6 +705,15 @@ class Neo4jMangaRepository:
         )
 
         main_works = self.search_manga_works(search_term, limit)
+
+        # Optional filtering by minimum total_volumes (main works first)
+        if min_total_volumes is not None:
+            filtered = [
+                w for w in main_works if (int(w.get("total_volumes", w.get("work_count", 0)) or 0) >= min_total_volumes)
+            ]
+            # If empty fallback (disable filter for main list)
+            if filtered:
+                main_works = filtered
 
         # total_volumes でのソート要求がある場合に適用（main_works は search_manga_works の結果）
         if sort_total_volumes in ("asc", "desc"):
@@ -720,6 +734,9 @@ class Neo4jMangaRepository:
 
         # Also search for publications (magazine serializations)
         publications = self.search_manga_publications(search_term, limit)
+
+        # メイン作品IDを保持（related 並び替え時に先頭固定）
+        main_work_ids = {w["work_id"] for w in main_works}
 
         if not main_works and not publications:
             logger.warning(f"No works or publications found for search term: '{search_term}'")
@@ -924,6 +941,12 @@ class Neo4jMangaRepository:
 
             # Add works by same author
             author_related = self.get_related_works_by_author(main_work_id, 5)
+            if min_total_volumes is not None:
+                author_related = [
+                    r
+                    for r in author_related
+                    if (int(r.get("total_volumes", r.get("work_count", 0)) or 0) >= min_total_volumes)
+                ]
             for related in author_related:
                 if related["work_id"] not in node_ids_seen:
                     related_node = {
@@ -955,6 +978,12 @@ class Neo4jMangaRepository:
             # Add works from same magazine and period
             logger.info(f"Getting magazine period related works for: {main_work_id}")
             magazine_period_related = self.get_related_works_by_magazine_and_period(main_work_id, 2, 50)
+            if min_total_volumes is not None:
+                magazine_period_related = [
+                    r
+                    for r in magazine_period_related
+                    if (int(r.get("total_volumes", r.get("work_count", 0)) or 0) >= min_total_volumes)
+                ]
             logger.info(f"Found {len(magazine_period_related)} magazine period related works")
 
             for idx, related in enumerate(magazine_period_related):
@@ -1083,6 +1112,12 @@ class Neo4jMangaRepository:
 
             # Add works from same publication period (without magazine constraint)
             period_related = self.get_related_works_by_publication_period(main_work_id, 3, 5)
+            if min_total_volumes is not None:
+                period_related = [
+                    r
+                    for r in period_related
+                    if (int(r.get("total_volumes", r.get("work_count", 0)) or 0) >= min_total_volumes)
+                ]
             for related in period_related:
                 if related["work_id"] not in node_ids_seen:
                     related_node = {
@@ -1129,6 +1164,29 @@ class Neo4jMangaRepository:
                                 edges.append(edge)
                                 edge_ids_seen.add(edge_id)
 
+            # --- Related works 並び替え (メイン作品を先頭に保持) ---
+            if sort_total_volumes in ("asc", "desc"):
+
+                def _extract_total_from_node(n: Dict[str, Any]) -> int:
+                    props = n.get("properties", n.get("data", {})) or {}
+                    tv = props.get("total_volumes") or props.get("work_count") or 0
+                    try:
+                        return int(tv)
+                    except Exception:
+                        import re
+
+                        m = re.search(r"(\d+)", str(tv))
+                        return int(m.group(1)) if m else 0
+
+                # 順番保持: 既存 nodes からメイン -> related 分離
+                main_nodes_in_order = [n for n in nodes if n.get("id") in main_work_ids]
+                related_nodes = [n for n in nodes if n.get("id") not in main_work_ids]
+
+                reverse = sort_total_volumes == "desc"
+                related_nodes.sort(key=_extract_total_from_node, reverse=reverse)
+
+                nodes = main_nodes_in_order + related_nodes
+
         # Final deduplication to ensure no duplicate nodes exist
         unique_nodes = []
         seen_work_titles = {}  # For work nodes, track by title to avoid duplicates
@@ -1136,26 +1194,52 @@ class Neo4jMangaRepository:
 
         for node in nodes:
             if node["type"] == "work":
-                # For work nodes, prioritize by keeping the one with more complete data
+                # For work nodes, prioritize by keeping the one with more complete data.
+                # Additionally, prefer nodes with a larger (or defined) total_volumes.
                 title = node["label"]
                 if title in seen_work_titles:
-                    # Keep the node with more complete data (more properties) and higher relevance_score
                     existing_node = seen_work_titles[title]
                     existing_data_count = len(existing_node.get("data", {}))
                     current_data_count = len(node.get("data", {}))
                     existing_score = existing_node.get("relevance_score", 0)
                     current_score = node.get("relevance_score", 0)
 
-                    # Prefer node with higher relevance_score, or more data if scores are equal
-                    if current_score > existing_score or (
-                        current_score == existing_score and current_data_count > existing_data_count
-                    ):
-                        # Replace with current node (has higher score or more data)
+                    def _extract_total_volumes(n):
+                        # Prefer properties then data
+                        for container_key in ("properties", "data"):
+                            container = n.get(container_key, {})
+                            tv = container.get("total_volumes")
+                            if tv not in (None, ""):
+                                try:
+                                    return int(tv)
+                                except (ValueError, TypeError):
+                                    return tv
+                        return None
+
+                    existing_tv = _extract_total_volumes(existing_node)
+                    current_tv = _extract_total_volumes(node)
+
+                    replace = False
+                    if current_score > existing_score:
+                        replace = True
+                    elif current_score == existing_score:
+                        # If both have total_volumes numeric, keep larger
+                        if isinstance(existing_tv, int) or isinstance(current_tv, int):
+                            existing_val = existing_tv if isinstance(existing_tv, int) else 0
+                            current_val = current_tv if isinstance(current_tv, int) else 0
+                            if current_val > existing_val:
+                                replace = True
+                            elif current_val == existing_val and current_data_count > existing_data_count:
+                                replace = True
+                        elif current_data_count > existing_data_count:
+                            replace = True
+
+                    if replace:
                         unique_nodes = [n for n in unique_nodes if n["label"] != title or n["type"] != "work"]
                         unique_nodes.append(node)
                         seen_work_titles[title] = node
                         unique_node_ids.add(node["id"])
-                    # Otherwise keep the existing one
+                    # else keep existing
                 else:
                     seen_work_titles[title] = node
                     unique_nodes.append(node)
@@ -1235,10 +1319,26 @@ class Neo4jMangaRepository:
             else:
                 other_nodes.append(node)
 
-        # Sort related work nodes by relevance_score in descending order
-        work_nodes.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+        # Related works ordering: total_volumes if requested else relevance_score
+        def _extract_total_for_node(n: Dict[str, Any]) -> int:
+            props = n.get("properties", n.get("data", {})) or {}
+            tv = props.get("total_volumes") or props.get("work_count") or 0
+            try:
+                return int(tv)
+            except Exception:
+                import re
 
-        # Combine: main results first, then sorted related works, then other nodes
+                m = re.search(r"(\d+)", str(tv))
+                return int(m.group(1)) if m else 0
+
+        if sort_total_volumes in ("asc", "desc"):
+            reverse_tv = sort_total_volumes == "desc"
+            work_nodes.sort(key=_extract_total_for_node, reverse=reverse_tv)
+        else:
+            # fallback relevance ordering
+            work_nodes.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+
+        # Combine: main results first (original order), then ordered related works, then other nodes
         unique_nodes = main_work_nodes + work_nodes + other_nodes
 
         logger.info(

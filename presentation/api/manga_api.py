@@ -369,12 +369,20 @@ async def search_neo4j_fast(
     q: str = Query(..., description="検索キーワード"),
     limit: int = Query(20, description="結果の上限"),
     include_related: bool = Query(True, description="関連作品を含めるかどうか"),
+    sort_total_volumes: Optional[str] = Query(
+        None,
+        description="total_volumesでソート: 'asc' または 'desc'。未指定ならタイトル既定順",
+        regex="^(asc|desc)$",
+    ),
     neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
 ):
     """Neo4jを使用した高速検索"""
     try:
         graph_data = neo4j_service.search_manga_data_with_related(
-            search_term=q, limit=limit, include_related=include_related
+            search_term=q,
+            limit=limit,
+            include_related=include_related,
+            sort_total_volumes=sort_total_volumes,
         )
 
         return GraphResponse(

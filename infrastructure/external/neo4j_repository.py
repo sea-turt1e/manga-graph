@@ -261,6 +261,7 @@ class Neo4jMangaRepository:
                    collect(DISTINCT p.name) as publishers,
                    collect(DISTINCT m.title) as magazines,
                    w.genre as genre, w.isbn as isbn, w.volume as volume,
+                   w.total_volumes as total_volumes,
                    s.id as series_id, s.name as series_name
             ORDER BY w.title, w.published_date
             """
@@ -282,6 +283,7 @@ class Neo4jMangaRepository:
                     "genre": record["genre"],
                     "isbn": record["isbn"],
                     "volume": record["volume"],
+                    "total_volumes": record.get("total_volumes"),
                     "series_id": record["series_id"],
                     "series_name": record["series_name"],
                 }
@@ -458,6 +460,11 @@ class Neo4jMangaRepository:
                         "work_count": len(group_data["works"]),
                         "series_volumes": f"{len(group_data['works'])}巻",  # シリーズ全体の巻数情報
                         "individual_works": group_data["works"],  # 個別作品の情報を保持
+                        # total_volumes が個々のノードに設定されている場合は最大値、なければ作品数
+                        "total_volumes": max(
+                            [int(v) for v in [w.get("total_volumes") for w in group_data["works"]] if str(v).isdigit()]
+                            or [len(group_data["works"])]
+                        ),
                     }
                     consolidated_works.append(series_work)
                 else:
@@ -465,6 +472,9 @@ class Neo4jMangaRepository:
                     single_work = group_data["works"][0]
                     single_work["is_series"] = False
                     single_work["work_count"] = 1
+                    if "total_volumes" not in single_work or single_work.get("total_volumes") in (None, ""):
+                        # total_volumes が無ければ 単巻の場合は 1 とする
+                        single_work["total_volumes"] = 1
                     consolidated_works.append(single_work)
 
             # Add standalone works
@@ -630,7 +640,13 @@ class Neo4jMangaRepository:
             logger.info(f"Query returned {len(results)} results")
             for idx, r in enumerate(results[:5]):  # Log first 5 results
                 logger.info(
-                    f"Result {idx}: {r['title']} (overlap: {r['overlap_years']} years, ratio: {r.get('overlap_ratio', 0):.2f}, jaccard: {r.get('jaccard_similarity', 0):.3f}, score: {r['relevance_score']})"
+                    "Result %d: %s (overlap: %s years, ratio: %.2f, jaccard: %.3f, score: %s)",
+                    idx,
+                    r["title"],
+                    r.get("overlap_years"),
+                    r.get("overlap_ratio", 0.0),
+                    r.get("jaccard_similarity", 0.0),
+                    r.get("relevance_score"),
                 )
             return results
 
@@ -672,7 +688,11 @@ class Neo4jMangaRepository:
             return publications
 
     def search_manga_data_with_related(
-        self, search_term: str, limit: int = 20, include_related: bool = True
+        self,
+        search_term: str,
+        limit: int = 20,
+        include_related: bool = True,
+        sort_total_volumes: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Search manga data and include related works for graph visualization"""
         logger.info(
@@ -680,6 +700,23 @@ class Neo4jMangaRepository:
         )
 
         main_works = self.search_manga_works(search_term, limit)
+
+        # total_volumes でのソート要求がある場合に適用（main_works は search_manga_works の結果）
+        if sort_total_volumes in ("asc", "desc"):
+
+            def extract_total(w):
+                tv = w.get("total_volumes") or w.get("work_count") or 0
+                try:
+                    return int(tv)
+                except Exception:
+                    # '全10巻' 等の文字列を抽出
+                    import re
+
+                    m = re.search(r"(\d+)", str(tv))
+                    return int(m.group(1)) if m else 0
+
+            reverse = sort_total_volumes == "desc"
+            main_works.sort(key=extract_total, reverse=reverse)
 
         # Also search for publications (magazine serializations)
         publications = self.search_manga_publications(search_term, limit)

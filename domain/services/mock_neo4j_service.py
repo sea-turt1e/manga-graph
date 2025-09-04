@@ -12,8 +12,12 @@ class MockNeo4jService:
     """Mock service that returns sample data when Neo4j is not available"""
 
     def search_manga_data_with_related(
-        self, search_term: str, limit: int = 20, include_related: bool = True
-    ) -> Dict[str, List]:
+        self,
+        search_term: str,
+        limit: int = 20,
+        include_related: bool = True,
+        sort_total_volumes: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Return mock manga data for testing"""
         logger.info(f"MockNeo4jService: Returning mock data for search term: '{search_term}'")
 
@@ -30,6 +34,7 @@ class MockNeo4jService:
                         "genre": "アクション",
                         "is_series": True,
                         "work_count": 30,
+                        "total_volumes": 30,
                         "source": "mock",
                     },
                 },
@@ -116,6 +121,18 @@ class MockNeo4jService:
                         },
                     ]
                 )
+
+            # Apply sorting if requested
+            if sort_total_volumes in ("asc", "desc"):
+                reverse = sort_total_volumes == "desc"
+                work_nodes = [n for n in nodes if n["type"] == "work"]
+                other_nodes = [n for n in nodes if n["type"] != "work"]
+                work_nodes.sort(
+                    key=lambda n: n.get("properties", {}).get("total_volumes")
+                    or n.get("properties", {}).get("work_count", 0),
+                    reverse=reverse,
+                )
+                nodes = work_nodes + other_nodes
 
             return {"nodes": nodes, "edges": edges}
 

@@ -62,7 +62,11 @@ class Neo4jMediaArtsService:
             return {"nodes": [], "edges": []}
 
     def search_manga_data_with_related(
-        self, search_term: str, limit: int = 20, include_related: bool = True
+        self,
+        search_term: str,
+        limit: int = 20,
+        include_related: bool = True,
+        sort_total_volumes: Optional[str] = None,
     ) -> Dict[str, List]:
         """
         Search manga data with related works using Neo4j
@@ -80,7 +84,9 @@ class Neo4jMediaArtsService:
             return {"nodes": [], "edges": []}
 
         try:
-            result = self.neo4j_repository.search_manga_data_with_related(search_term, limit, include_related)
+            result = self.neo4j_repository.search_manga_data_with_related(
+                search_term, limit, include_related, sort_total_volumes=sort_total_volumes
+            )
 
             if self.use_mock:
                 # Mock service returns data in the correct format already
@@ -229,6 +235,7 @@ class Neo4jMediaArtsService:
                         "volume": "1" if is_series else volume,  # Series always show volume 1
                         "is_series": is_series,
                         "work_count": node_data.get("work_count", 1),
+                        "total_volumes": node_data.get("total_volumes", node_data.get("work_count", 1)),
                     }
                 )
 

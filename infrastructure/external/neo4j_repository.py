@@ -697,6 +697,7 @@ class Neo4jMangaRepository:
         limit: int = 20,
         include_related: bool = True,
         sort_total_volumes: Optional[str] = None,
+        min_total_volumes: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Search manga data and include related works for graph visualization"""
         logger.info(
@@ -704,6 +705,15 @@ class Neo4jMangaRepository:
         )
 
         main_works = self.search_manga_works(search_term, limit)
+
+        # Optional filtering by minimum total_volumes (main works first)
+        if min_total_volumes is not None:
+            filtered = [
+                w for w in main_works if (int(w.get("total_volumes", w.get("work_count", 0)) or 0) >= min_total_volumes)
+            ]
+            # If empty fallback (disable filter for main list)
+            if filtered:
+                main_works = filtered
 
         # total_volumes でのソート要求がある場合に適用（main_works は search_manga_works の結果）
         if sort_total_volumes in ("asc", "desc"):
@@ -928,6 +938,12 @@ class Neo4jMangaRepository:
 
             # Add works by same author
             author_related = self.get_related_works_by_author(main_work_id, 5)
+            if min_total_volumes is not None:
+                author_related = [
+                    r
+                    for r in author_related
+                    if (int(r.get("total_volumes", r.get("work_count", 0)) or 0) >= min_total_volumes)
+                ]
             for related in author_related:
                 if related["work_id"] not in node_ids_seen:
                     related_node = {
@@ -959,6 +975,12 @@ class Neo4jMangaRepository:
             # Add works from same magazine and period
             logger.info(f"Getting magazine period related works for: {main_work_id}")
             magazine_period_related = self.get_related_works_by_magazine_and_period(main_work_id, 2, 50)
+            if min_total_volumes is not None:
+                magazine_period_related = [
+                    r
+                    for r in magazine_period_related
+                    if (int(r.get("total_volumes", r.get("work_count", 0)) or 0) >= min_total_volumes)
+                ]
             logger.info(f"Found {len(magazine_period_related)} magazine period related works")
 
             for idx, related in enumerate(magazine_period_related):
@@ -1087,6 +1109,12 @@ class Neo4jMangaRepository:
 
             # Add works from same publication period (without magazine constraint)
             period_related = self.get_related_works_by_publication_period(main_work_id, 3, 5)
+            if min_total_volumes is not None:
+                period_related = [
+                    r
+                    for r in period_related
+                    if (int(r.get("total_volumes", r.get("work_count", 0)) or 0) >= min_total_volumes)
+                ]
             for related in period_related:
                 if related["work_id"] not in node_ids_seen:
                     related_node = {

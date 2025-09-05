@@ -309,6 +309,10 @@ def main():
     """Main function"""
     import argparse
 
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description="Add synopsis data from manga.csv to Neo4j")
     parser.add_argument("csv_path", nargs="?", help="Path to manga.csv file")
     parser.add_argument("--no-embeddings", action="store_true", help="Skip creating embeddings")

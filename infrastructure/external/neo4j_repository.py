@@ -1344,8 +1344,16 @@ class Neo4jMangaRepository:
         # Combine: main results first (original order), then ordered related works, then other nodes
         unique_nodes = main_work_nodes + work_nodes + other_nodes
 
+        # Enforce overall node limit including related nodes
+        if limit is not None and isinstance(limit, int) and limit > 0 and len(unique_nodes) > limit:
+            kept_nodes = unique_nodes[:limit]
+            kept_ids = {n["id"] for n in kept_nodes}
+            # Filter edges to only those connecting kept nodes
+            unique_edges = [e for e in unique_edges if e.get("source") in kept_ids and e.get("target") in kept_ids]
+            unique_nodes = kept_nodes
+
         logger.info(
-            f"After deduplication: {len(unique_nodes)} nodes and {len(unique_edges)} edges for search term: '{search_term}'"
+            f"After deduplication (limited): {len(unique_nodes)} nodes and {len(unique_edges)} edges for search term: '{search_term}'"
         )
         return {"nodes": unique_nodes, "edges": unique_edges}
 

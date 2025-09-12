@@ -6,6 +6,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+from dotenv import load_dotenv
 from neo4j import GraphDatabase
 
 from domain.services.name_normalizer import (
@@ -16,6 +17,8 @@ from domain.services.name_normalizer import (
 )
 
 logger = logging.getLogger(__name__)
+
+load_dotenv()
 
 
 class Neo4jMangaRepository:

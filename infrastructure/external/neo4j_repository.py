@@ -1035,6 +1035,8 @@ class Neo4jMangaRepository:
         session = self.driver.session()
         # 1) Try vector index search (fast path) with confirmed signature
         try:
+            # ANN の取りこぼしを抑えるため、limit より多めに候補を取得してから再ランク・上位 limit 件に絞る
+            internal_topk = int(min(max(int(limit) * 5, int(limit)), 200))
             index_query = """
           CALL db.index.vector.queryNodes($indexName, $topK, $embedding) YIELD node, score
           WITH node, score
@@ -1048,7 +1050,7 @@ class Neo4jMangaRepository:
                 index_query,
                 indexName="Work_embedding_vector_index",
                 embedding=embedding,
-                topK=int(limit),
+                topK=internal_topk,
                 threshold=float(similarity_threshold),
             )
             out: List[Dict[str, Any]] = []
@@ -1056,7 +1058,9 @@ class Neo4jMangaRepository:
                 d = dict(record)
                 d["similarity_score"] = d.pop("score", None)
                 out.append(d)
-            return out
+            # 念のため Python 側でもスコア順を維持し、上位 limit 件へ絞る
+            out.sort(key=lambda x: x.get("similarity_score", 0.0), reverse=True)
+            return out[: int(limit)]
         except Exception as e:
             logger.warning("Title vector search via index failed, falling back to scan: %s", e)
 

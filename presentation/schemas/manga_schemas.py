@@ -147,3 +147,13 @@ class BulkCoverResponse(BaseModel):
     total_processed: int
     success_count: int
     error_count: int
+
+
+class TitleSimilarityItem(BaseModel):
+    title: str
+    similarity_score: float
+
+
+class TitleSimilarityResponse(BaseModel):
+    results: List[TitleSimilarityItem]
+    total: int

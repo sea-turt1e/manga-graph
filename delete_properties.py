@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 def remove_properties_in_batches():
-    repository = Neo4jMangaRepository(uri="bolt://localhost:7687", user="neo4j", password="password")
+    # Repository reads NEO4J_* from environment; configure via .env
+    repository = Neo4jMangaRepository()
 
     try:
         with repository.driver.session() as session:

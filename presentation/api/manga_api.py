@@ -1092,18 +1092,12 @@ async def search_manga_fuzzy(
         # クエリテキストの埋め込みを生成
         query_embedding = processor.generate_embedding(q)
 
-        # ベクトル検索を実行
-        search_results = neo4j_service.neo4j_repository.search_by_vector(
+        # ベクトルインデックス検索を実行（内部で多めに取得して再ランク）
+        filtered_results = neo4j_service.neo4j_repository.search_by_vector_index(
             embedding=query_embedding,
-            label="Work",
-            property_name="embedding",
-            limit=limit * 2,  # 閾値フィルタリング前に多めに取得
+            limit=limit,
+            similarity_threshold=similarity_threshold,
         )
-
-        # 類似度でフィルタリング
-        filtered_results = [
-            result for result in search_results if result.get("similarity_score", 0) >= similarity_threshold
-        ][:limit]
 
         # GraphResponse形式に変換
         nodes = []

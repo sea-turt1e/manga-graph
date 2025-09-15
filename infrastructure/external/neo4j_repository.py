@@ -927,6 +927,62 @@ class Neo4jMangaRepository:
             logger.error("Vector search (scan) failed: %s", e)
             return []
 
+    def search_by_vector_index(
+        self,
+        embedding: List[float],
+        limit: int = 10,
+        similarity_threshold: float = 0.0,
+    ) -> List[Dict[str, Any]]:
+        """Search Work nodes by vector similarity using Neo4j vector index.
+
+        - Uses `Work_embedding_vector_index` with confirmed signature (indexName, topK, query)
+        - Fetches more candidates (internal_topk) and re-ranks client-side to reduce ANN misses
+        - Returns detailed fields similar to search_by_vector
+        """
+        session = self.driver.session()
+        try:
+            internal_topk = int(min(max(int(limit) * 5, int(limit)), 200))
+            query = """
+          CALL db.index.vector.queryNodes($indexName, $topK, $embedding) YIELD node, score
+          WITH node, score
+          WHERE score >= $threshold
+          OPTIONAL MATCH (node)-[:CREATED_BY]->(a:Author)
+          OPTIONAL MATCH (node)-[:PUBLISHED_IN]->(m:Magazine)-[:PUBLISHED_BY]->(p:Publisher)
+          RETURN node.id AS work_id,
+                node.title AS title,
+                node.published_date AS published_date,
+                node.first_published AS first_published,
+                node.last_published AS last_published,
+                collect(DISTINCT a.name) AS creators,
+                collect(DISTINCT m.title) AS magazines,
+                collect(DISTINCT p.name) AS publishers,
+                node.genre AS genre,
+                node.isbn AS isbn,
+                node.volume AS volume,
+                node.series_id AS series_id,
+                node.series_name AS series_name,
+                score AS score
+          ORDER BY score DESC
+          LIMIT $topK
+            """
+            result = session.run(
+                query,
+                indexName="Work_embedding_vector_index",
+                embedding=embedding,
+                topK=internal_topk,
+                threshold=float(similarity_threshold),
+            )
+            out: List[Dict[str, Any]] = []
+            for record in result:
+                d = dict(record)
+                d["similarity_score"] = d.pop("score", None)
+                out.append(d)
+            out.sort(key=lambda x: x.get("similarity_score", 0.0), reverse=True)
+            return out[: int(limit)]
+        except Exception as e:
+            logger.error("Vector index search failed: %s", e)
+            return []
+
     def add_embedding_to_work(self, work_id: str, embedding: List[float]) -> bool:
         """Attach an embedding vector to a Work node."""
         session = self.driver.session()

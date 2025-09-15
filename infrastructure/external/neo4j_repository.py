@@ -44,40 +44,247 @@ class Neo4jMangaRepository:
 
     # ---------------------- Public queries ------------------------
     def search_manga_works(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
-        query = """
-        MATCH (w:Work)
-        WHERE toLower(w.title) CONTAINS toLower($term)
-        OPTIONAL MATCH (w)-[:CREATED_BY]->(a:Author)
-        OPTIONAL MATCH (w)-[:PUBLISHED_IN]->(m:Magazine)-[:PUBLISHED_BY]->(p:Publisher)
-        RETURN w.id AS work_id,
-               w.title AS title,
-               w.genre AS genre,
-               w.first_published AS first_published,
-               w.last_published AS last_published,
-               w.total_volumes AS total_volumes,
-               collect(DISTINCT a.name) AS creators,
-               collect(DISTINCT m.title) AS magazines,
-               collect(DISTINCT p.name) AS publishers
-        ORDER BY w.title
-        LIMIT $limit
-        """
-        result = self._run(query, term=search_term, limit=limit)
-        works: List[Dict[str, Any]] = []
-        for record in result:
-            works.append(
-                {
+        """Search for manga works by title, grouping by series"""
+        logger.info(f"Searching for manga works with term: '{search_term}', limit: {limit}")
+        with self.driver.session() as session:
+            # First, get all matching works and publications
+            query = """
+            MATCH (w:Work)
+            WHERE toLower(w.title) CONTAINS toLower($search_term)
+            OPTIONAL MATCH (w)-[:CREATED_BY]->(a:Author)
+            OPTIONAL MATCH (w)-[:PUBLISHED_IN]->(m:Magazine)
+            OPTIONAL MATCH (m)-[:PUBLISHED_BY]->(p:Publisher)
+            OPTIONAL MATCH (s:Series)-[:CONTAINS]->(w)
+            OPTIONAL MATCH (pub:Publication)-[:RELATED_TO]->(w)
+            OPTIONAL MATCH (pub)-[:PUBLISHED_IN_MAGAZINE]->(m2:Magazine)
+            RETURN w.id as work_id, w.title as title, w.published_date as published_date,
+                   w.first_published as first_published, w.last_published as last_published,
+                   collect(DISTINCT a.name) as creators,
+                   collect(DISTINCT p.name) as publishers,
+                   collect(DISTINCT m.title) as magazines,
+                   w.genre as genre, w.isbn as isbn, w.volume as volume,
+                   w.total_volumes as total_volumes,
+                   s.id as series_id, s.name as series_name
+            ORDER BY w.title, w.published_date
+            """
+
+            logger.debug(f"Running query with search_term: {search_term}")
+            result = session.run(query, search_term=search_term)
+            all_works = []
+
+            for record in result:
+                work = {
                     "work_id": record["work_id"],
                     "title": record["title"],
-                    "genre": record.get("genre"),
-                    "first_published": record.get("first_published"),
-                    "last_published": record.get("last_published"),
+                    "published_date": record["published_date"],
+                    "first_published": record["first_published"],
+                    "last_published": record["last_published"],
+                    "creators": [c for c in record["creators"] if c],
+                    "publishers": [p for p in record["publishers"] if p],
+                    "magazines": [m for m in record["magazines"] if m],
+                    "genre": record["genre"],
+                    "isbn": record["isbn"],
+                    "volume": record["volume"],
                     "total_volumes": record.get("total_volumes"),
-                    "creators": [c for c in (record.get("creators") or []) if c],
-                    "magazines": [m for m in (record.get("magazines") or []) if m],
-                    "publishers": [p for p in (record.get("publishers") or []) if p],
+                    "series_id": record["series_id"],
+                    "series_name": record["series_name"],
                 }
-            )
-        return works
+                all_works.append(work)
+
+            logger.info(f"Found {len(all_works)} works matching '{search_term}'")
+
+            # Group works by series or base title
+            series_groups = {}
+            series_name_to_key = {}  # シリーズ名からキーへのマッピング
+            standalone_works = []
+
+            for work in all_works:
+                if work["series_id"]:
+                    # シリーズ名を取得
+                    series_name = work["series_name"] or self._extract_base_title(work["title"])
+
+                    # 既存のシリーズ名と一致するかチェック
+                    if series_name in series_name_to_key:
+                        # 既存のグループに追加
+                        series_key = series_name_to_key[series_name]
+                    else:
+                        # 新しいシリーズキーとして登録
+                        series_key = work["series_id"]
+                        series_name_to_key[series_name] = series_key
+                        series_groups[series_key] = {
+                            "series_id": work["series_id"],
+                            "series_name": series_name,
+                            "works": [],
+                            "creators": set(),
+                            "publishers": set(),
+                            "earliest_date": work["published_date"],
+                            "latest_date": work["published_date"],
+                            "volumes": [],
+                        }
+
+                    series_groups[series_key]["works"].append(work)
+                    series_groups[series_key]["creators"].update(work["creators"])
+                    series_groups[series_key]["publishers"].update(work["publishers"])
+                    if "magazines" not in series_groups[series_key]:
+                        series_groups[series_key]["magazines"] = set()
+                    series_groups[series_key]["magazines"].update(work["magazines"])
+                    if work["volume"]:
+                        series_groups[series_key]["volumes"].append(work["volume"])
+                    # 最も古い日付と新しい日付を更新
+                    if work["published_date"] and work["published_date"] < series_groups[series_key]["earliest_date"]:
+                        series_groups[series_key]["earliest_date"] = work["published_date"]
+                    if work["published_date"] and work["published_date"] > series_groups[series_key]["latest_date"]:
+                        series_groups[series_key]["latest_date"] = work["published_date"]
+                else:
+                    # シリーズIDがない場合は、タイトルから基本タイトルを抽出してグループ化を試みる
+                    base_title = self._extract_base_title(work["title"])
+
+                    # 既存のシリーズ名とマッチするかチェック
+                    found_group = False
+                    for existing_series_name, series_key in series_name_to_key.items():
+                        if base_title == existing_series_name or base_title == self._extract_base_title(
+                            existing_series_name
+                        ):
+                            # 既存のグループに追加
+                            series_groups[series_key]["works"].append(work)
+                            series_groups[series_key]["creators"].update(work["creators"])
+                            series_groups[series_key]["publishers"].update(work["publishers"])
+                            if "magazines" not in series_groups[series_key]:
+                                series_groups[series_key]["magazines"] = set()
+                            series_groups[series_key]["magazines"].update(work["magazines"])
+                            if work["volume"]:
+                                series_groups[series_key]["volumes"].append(work["volume"])
+                            # 日付を更新
+                            if (
+                                work["published_date"]
+                                and work["published_date"] < series_groups[series_key]["earliest_date"]
+                            ):
+                                series_groups[series_key]["earliest_date"] = work["published_date"]
+                            if (
+                                work["published_date"]
+                                and work["published_date"] > series_groups[series_key]["latest_date"]
+                            ):
+                                series_groups[series_key]["latest_date"] = work["published_date"]
+                            found_group = True
+                            break
+
+                    if not found_group:
+                        # 新しいグループを作成
+                        series_key = f"series_{abs(hash(base_title))}"
+                        series_name_to_key[base_title] = series_key
+                        series_groups[series_key] = {
+                            "series_id": series_key,
+                            "series_name": base_title,
+                            "works": [work],
+                            "creators": set(work["creators"]),
+                            "publishers": set(work["publishers"]),
+                            "magazines": set(work["magazines"]),
+                            "earliest_date": work["published_date"],
+                            "latest_date": work["published_date"],
+                            "volumes": [work["volume"]] if work["volume"] else [],
+                        }
+
+            # Convert groups to single works representing the series
+            consolidated_works = []
+            for group_data in series_groups.values():
+                # 複数の作品がある場合は最初の巻を返す
+                if len(group_data["works"]) > 1:
+                    # 巻数でソートして最初の巻を選択、巻数がない場合は出版日でソート
+                    def sort_key(work):
+                        volume = work.get("volume", "")
+                        if volume and str(volume).strip():
+                            # 巻数を数値として抽出
+                            import re
+
+                            volume_match = re.search(r"(\d+)", str(volume))
+                            if volume_match:
+                                volume_num = int(volume_match.group(1))
+                                # 1巻がある場合は最優先
+                                if volume_num == 1:
+                                    return (0, 1)
+                                return (0, volume_num)  # 巻数がある場合は優先度0
+                        # 巻数がない場合は出版日を使用し、最も古い日付を優先
+                        published_date = work.get("published_date", "9999-99-99")
+                        if not published_date:
+                            published_date = "9999-99-99"
+                        return (1, published_date)  # 巻数がない場合は優先度1
+
+                    sorted_works = sorted(group_data["works"], key=sort_key)
+
+                    # 第1巻を探す（なければ最初の巻を使用）
+                    first_volume_work = None
+                    for work in sorted_works:
+                        volume = work.get("volume", "")
+                        if volume and str(volume).strip():
+                            import re
+
+                            volume_match = re.search(r"(\d+)", str(volume))
+                            if volume_match and int(volume_match.group(1)) == 1:
+                                first_volume_work = work
+                                logger.debug(f"Found volume 1 for series: {work['title']} (ID: {work['work_id']})")
+                                break
+
+                    # 第1巻が見つからない場合は、ソート済みリストの最初を使用
+                    if not first_volume_work:
+                        first_volume_work = sorted_works[0]
+                        logger.debug(
+                            f"Volume 1 not found, using first sorted work: {first_volume_work['title']} "
+                            f"(ID: {first_volume_work['work_id']}, volume: {first_volume_work.get('volume', 'N/A')})"
+                        )
+
+                    # タイトルから巻数表記を除去
+                    base_title = self._extract_base_title(first_volume_work["title"])
+
+                    # シリーズ全体のfirst_publishedとlast_publishedを計算
+                    all_first_dates = [w["first_published"] for w in group_data["works"] if w.get("first_published")]
+                    all_last_dates = [w["last_published"] for w in group_data["works"] if w.get("last_published")]
+
+                    series_first_published = (
+                        min(all_first_dates) if all_first_dates else first_volume_work.get("first_published")
+                    )
+                    series_last_published = (
+                        max(all_last_dates) if all_last_dates else first_volume_work.get("last_published")
+                    )
+
+                    series_work = {
+                        "work_id": first_volume_work["work_id"],  # 第1巻のIDを使用
+                        "title": base_title,  # 巻数を除去したタイトル
+                        "published_date": first_volume_work["published_date"],
+                        "first_published": series_first_published,
+                        "last_published": series_last_published,
+                        "creators": list(group_data["creators"]),  # シリーズ全体のクリエイター
+                        "publishers": list(group_data["publishers"]),  # シリーズ全体の出版社
+                        "magazines": list(group_data["magazines"]),  # シリーズ全体の雑誌
+                        "genre": first_volume_work["genre"],
+                        "isbn": first_volume_work["isbn"],
+                        "volume": "1",  # シリーズは常に第1巻として表示
+                        "is_series": True,
+                        "work_count": len(group_data["works"]),
+                        "series_volumes": f"{len(group_data['works'])}巻",  # シリーズ全体の巻数情報
+                        "individual_works": group_data["works"],  # 個別作品の情報を保持
+                        # total_volumes が個々のノードに設定されている場合は最大値、なければ作品数
+                        "total_volumes": max(
+                            [int(v) for v in [w.get("total_volumes") for w in group_data["works"]] if str(v).isdigit()]
+                            or [len(group_data["works"])]
+                        ),
+                    }
+                    consolidated_works.append(series_work)
+                else:
+                    # 単一作品の場合はそのまま使用
+                    single_work = group_data["works"][0]
+                    single_work["is_series"] = False
+                    single_work["work_count"] = 1
+                    if "total_volumes" not in single_work or single_work.get("total_volumes") in (None, ""):
+                        # total_volumes が無ければ 単巻の場合は 1 とする
+                        single_work["total_volumes"] = 1
+                    consolidated_works.append(single_work)
+
+            # Add standalone works
+            consolidated_works.extend(standalone_works)
+
+            # Sort by title and limit results
+            consolidated_works.sort(key=lambda x: x["title"])
+            return consolidated_works[:limit]
 
     def search_manga_publications(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
         query = """
@@ -870,62 +1077,59 @@ class Neo4jMangaRepository:
             logger.error("Failed to create vector index: %s", e)
 
     def search_by_vector(
-        self,
-        embedding: List[float],
-        label: str = "Work",
-        property_name: str = "embedding",
-        limit: int = 10,
+        self, embedding: List[float], label: str = "Work", property_name: str = "embedding", limit: int = 10
     ) -> List[Dict[str, Any]]:
-        """Search nodes by vector similarity without using vector indexes.
-
-        This implementation performs a label scan and computes cosine similarity
-        in Cypher using array reductions. It avoids any index/procedure so it
-        works on Neo4j plans where vector index is unavailable.
-        """
-        session = self.driver.session()
-        try:
-            # Compute cosine similarity in pure Cypher
-            # Note: We limit first by top-N after computing scores to keep runtime reasonable.
-            query = f"""
-          MATCH (node:{label})
-          WHERE node.{property_name} IS NOT NULL AND size(node.{property_name}) > 0
-          WITH node, node.{property_name} AS v1, $embedding AS v2,
-              CASE WHEN size(node.{property_name}) < size($embedding)
-                  THEN size(node.{property_name}) ELSE size($embedding) END AS n
-          WITH node, v1, v2, n,
-              reduce(dot = 0.0, i IN range(0, n-1) | dot + coalesce(v1[i], 0.0) * coalesce(v2[i], 0.0)) AS dot,
-              sqrt(reduce(s1 = 0.0, i IN range(0, n-1) | s1 + coalesce(v1[i], 0.0)^2)) AS norm1,
-              sqrt(reduce(s2 = 0.0, i IN range(0, n-1) | s2 + coalesce(v2[i], 0.0)^2)) AS norm2
-          WITH node, CASE WHEN norm1 = 0 OR norm2 = 0 THEN 0.0 ELSE dot / (norm1 * norm2) END AS score
-          ORDER BY score DESC
-          LIMIT $limit
-          OPTIONAL MATCH (node)-[:CREATED_BY]->(a:Author)
-          OPTIONAL MATCH (node)-[:PUBLISHED_IN]->(m:Magazine)-[:PUBLISHED_BY]->(p:Publisher)
-          RETURN node.id AS work_id,
-                node.title AS title,
-                node.published_date AS published_date,
-                node.first_published AS first_published,
-                node.last_published AS last_published,
-                collect(DISTINCT a.name) AS creators,
-                collect(DISTINCT m.title) AS magazines,
-                collect(DISTINCT p.name) AS publishers,
-                node.genre AS genre,
-                node.isbn AS isbn,
-                node.volume AS volume,
-                node.series_id AS series_id,
-                node.series_name AS series_name,
-                score AS score
+        """Search nodes by vector similarity"""
+        logger.info(f"Searching by vector similarity for {label} nodes, limit: {limit}")
+        with self.driver.session() as session:
+            query = """
+            CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
+            YIELD node, score
+            OPTIONAL MATCH (node)-[:CREATED_BY]->(a:Author)
+            OPTIONAL MATCH (node)-[:PUBLISHED_IN]->(m:Magazine)
+            OPTIONAL MATCH (m)-[:PUBLISHED_BY]->(p:Publisher)
+            OPTIONAL MATCH (s:Series)-[:CONTAINS]->(node)
+            RETURN node.id as work_id, node.title as title, node.published_date as published_date,
+                   node.first_published as first_published, node.last_published as last_published,
+                   collect(DISTINCT a.name) as creators,
+                   collect(DISTINCT p.name) as publishers,
+                   collect(DISTINCT m.title) as magazines,
+                   node.genre as genre, node.isbn as isbn, node.volume as volume,
+                   s.id as series_id, s.name as series_name,
+                   score
+            ORDER BY score DESC
             """
-            result = session.run(query, embedding=embedding, limit=int(limit))
-            out: List[Dict[str, Any]] = []
-            for record in result:
-                d = dict(record)
-                d["similarity_score"] = d.pop("score", None)
-                out.append(d)
-            return out
-        except Exception as e:
-            logger.error("Vector search (scan) failed: %s", e)
-            return []
+
+            try:
+                index_name = f"{label}_{property_name}_vector_index"
+                result = session.run(query, index_name=index_name, limit=limit, embedding=embedding)
+                # result = session.run(query, limit=limit, embedding=embedding)
+                works = []
+                for record in result:
+                    work = {
+                        "work_id": record["work_id"],
+                        "title": record["title"],
+                        "published_date": record["published_date"],
+                        "first_published": record["first_published"],
+                        "last_published": record["last_published"],
+                        "creators": [c for c in record["creators"] if c],
+                        "publishers": [p for p in record["publishers"] if p],
+                        "magazines": [m for m in record["magazines"] if m],
+                        "genre": record["genre"],
+                        "isbn": record["isbn"],
+                        "volume": record["volume"],
+                        "series_id": record["series_id"],
+                        "series_name": record["series_name"],
+                        "similarity_score": record["score"],
+                    }
+                    works.append(work)
+
+                logger.info(f"Found {len(works)} works by vector similarity")
+                return works
+
+            except Exception as e:
+                logger.error(f"Vector search failed: {e}")
+                return []
 
     def add_embedding_to_work(self, work_id: str, embedding: List[float]) -> bool:
         """Attach an embedding vector to a Work node."""
@@ -1033,32 +1237,28 @@ class Neo4jMangaRepository:
         without relying on vector indexes or procedures. It returns only the
         minimal fields to reduce latency.
         """
-        session = self.driver.session()
-        try:
-            query = """
-          MATCH (node:Work)
-          WHERE node.embedding IS NOT NULL AND size(node.embedding) > 0
-          WITH node, node.embedding AS v1, $embedding AS v2,
-              CASE WHEN size(node.embedding) < size($embedding)
-                  THEN size(node.embedding) ELSE size($embedding) END AS n
-          WITH node, v1, v2, n,
-              reduce(dot = 0.0, i IN range(0, n-1) | dot + coalesce(v1[i], 0.0) * coalesce(v2[i], 0.0)) AS dot,
-              sqrt(reduce(s1 = 0.0, i IN range(0, n-1) | s1 + coalesce(v1[i], 0.0)^2)) AS norm1,
-              sqrt(reduce(s2 = 0.0, i IN range(0, n-1) | s2 + coalesce(v2[i], 0.0)^2)) AS norm2
-          WITH node, CASE WHEN norm1 = 0 OR norm2 = 0 THEN 0.0 ELSE dot / (norm1 * norm2) END AS score
-          WHERE score >= $threshold
-          ORDER BY score DESC
-          LIMIT $limit
-          RETURN node.title AS title,
-                 score AS score
-            """
-            result = session.run(query, embedding=embedding, limit=int(limit), threshold=float(similarity_threshold))
-            out: List[Dict[str, Any]] = []
-            for record in result:
-                d = dict(record)
-                d["similarity_score"] = d.pop("score", None)
-                out.append(d)
-            return out
-        except Exception as e:
-            logger.error("Title vector search (scan) failed: %s", e)
-            return []
+        with self.driver.session() as session:
+            query = (
+                "CALL db.index.vector.queryNodes($index_name, $limit, $embedding) "
+                "YIELD node, score "
+                "WITH node, score WHERE score >= $threshold "
+                "RETURN node.title AS title, score AS score "
+                "ORDER BY score DESC "
+                "LIMIT $limit"
+            )
+            try:
+                index_name = "Work_embedding_vector_index"
+                result = session.run(
+                    query,
+                    index_name=index_name,
+                    limit=int(limit),
+                    embedding=embedding,
+                    threshold=float(similarity_threshold),
+                )
+                out: List[Dict[str, Any]] = []
+                for record in result:
+                    out.append({"title": record["title"], "similarity_score": record.get("score")})
+                return out
+            except Exception as e:
+                logger.error("Title vector index search failed: %s", e)
+                return []

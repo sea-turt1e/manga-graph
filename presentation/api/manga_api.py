@@ -1092,18 +1092,15 @@ async def search_manga_fuzzy(
         # クエリテキストの埋め込みを生成
         query_embedding = processor.generate_embedding(q)
 
-        # ベクトル検索を実行
-        search_results = neo4j_service.neo4j_repository.search_by_vector(
-            embedding=query_embedding,
-            label="Work",
-            property_name="embedding",
-            limit=limit * 2,  # 閾値フィルタリング前に多めに取得
+        # ハイブリッド検索（text + vector）を実行し、その中から類似度でフィルタ
+        hybrid_results = neo4j_service.neo4j_repository.search_manga_works_with_vector(
+            search_term=q, embedding=query_embedding, limit=limit * 2
         )
 
         # 類似度でフィルタリング
-        filtered_results = [
-            result for result in search_results if result.get("similarity_score", 0) >= similarity_threshold
-        ][:limit]
+        filtered_results = [r for r in hybrid_results if (r.get("similarity_score") or 0.0) >= similarity_threshold][
+            :limit
+        ]
 
         # GraphResponse形式に変換
         nodes = []
@@ -1192,17 +1189,21 @@ async def vector_title_similarity(
             )
         query_embedding = processor.generate_embedding(q)
 
-        # 低レイテンシ用に最小フィールドのみ取得（Cypher 側で threshold を適用）
-        raw = neo4j_service.neo4j_repository.search_work_titles_by_vector_minimal(
-            embedding=query_embedding, limit=limit, similarity_threshold=similarity_threshold
+        # ハイブリッド検索を実行し、ベクトル結果のみを抽出して降順で上位 limit 件
+        hybrid = neo4j_service.neo4j_repository.search_manga_works_with_vector(
+            search_term=q, embedding=query_embedding, limit=limit * 2
         )
+        vector_only = [
+            r
+            for r in hybrid
+            if (r.get("similarity_score") is not None) and (r.get("similarity_score") >= similarity_threshold)
+        ]
+        vector_only.sort(key=lambda x: x.get("similarity_score") or 0.0, reverse=True)
+        topk = vector_only[:limit]
 
         items = [
-            TitleSimilarityItem(
-                title=r.get("title") or "",
-                similarity_score=float(r.get("similarity_score") or 0.0),
-            )
-            for r in raw
+            TitleSimilarityItem(title=r.get("title") or "", similarity_score=float(r.get("similarity_score") or 0.0))
+            for r in topk
         ]
         return TitleSimilarityResponse(results=items, total=len(items))
     except HTTPException:

@@ -15,8 +15,10 @@ class TestVectorSearch:
     @pytest.fixture
     def mock_driver(self):
         """Create a mock Neo4j driver"""
-        driver = Mock()
-        session = Mock()
+        driver = MagicMock()
+        session = MagicMock()
+        # Return the session both directly and via context manager
+        driver.session.return_value = session
         driver.session.return_value.__enter__.return_value = session
         driver.session.return_value.__exit__.return_value = None
         return driver, session

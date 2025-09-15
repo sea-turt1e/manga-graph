@@ -1029,13 +1029,40 @@ class Neo4jMangaRepository:
     ) -> List[Dict[str, Any]]:
         """Vector search over Work.embedding returning only title and similarity.
 
-        This uses a label scan and computes cosine similarity in pure Cypher
-        without relying on vector indexes or procedures. It returns only the
-        minimal fields to reduce latency.
+        優先的に Neo4j のベクトルインデックス `Work_embedding_vector_index` を使用して検索します。
+        インデックス呼び出しに失敗した場合は、従来のスキャン + コサイン類似度計算へフォールバックします。
         """
         session = self.driver.session()
+        # 1) Try vector index search (fast path) with confirmed signature
         try:
-            query = """
+            index_query = """
+          CALL db.index.vector.queryNodes($indexName, $topK, $embedding) YIELD node, score
+          WITH node, score
+          WHERE score >= $threshold
+          RETURN node.title AS title,
+                 score AS score
+          ORDER BY score DESC
+          LIMIT $topK
+            """
+            result = session.run(
+                index_query,
+                indexName="Work_embedding_vector_index",
+                embedding=embedding,
+                topK=int(limit),
+                threshold=float(similarity_threshold),
+            )
+            out: List[Dict[str, Any]] = []
+            for record in result:
+                d = dict(record)
+                d["similarity_score"] = d.pop("score", None)
+                out.append(d)
+            return out
+        except Exception as e:
+            logger.warning("Title vector search via index failed, falling back to scan: %s", e)
+
+        # 2) Fallback: label scan + cosine similarity in Cypher
+        try:
+            scan_query = """
           MATCH (node:Work)
           WHERE node.embedding IS NOT NULL AND size(node.embedding) > 0
           WITH node, node.embedding AS v1, $embedding AS v2,
@@ -1052,7 +1079,12 @@ class Neo4jMangaRepository:
           RETURN node.title AS title,
                  score AS score
             """
-            result = session.run(query, embedding=embedding, limit=int(limit), threshold=float(similarity_threshold))
+            result = session.run(
+                scan_query,
+                embedding=embedding,
+                limit=int(limit),
+                threshold=float(similarity_threshold),
+            )
             out: List[Dict[str, Any]] = []
             for record in result:
                 d = dict(record)

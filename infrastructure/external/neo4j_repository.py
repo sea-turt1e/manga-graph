@@ -1,12 +1,10 @@
 """
-Neo4j database repository for manga graph data
+Neo4j database repository for manga graph data (external)
 """
 
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
-from dotenv import load_dotenv
 from neo4j import GraphDatabase
 
 from domain.services.name_normalizer import (
@@ -18,1310 +16,713 @@ from domain.services.name_normalizer import (
 
 logger = logging.getLogger(__name__)
 
-load_dotenv()
-
 
 class Neo4jMangaRepository:
-    """Neo4j-based manga data repository"""
+    def __init__(self, driver: Optional[Any] = None) -> None:
+        import os
 
-    def __init__(self, driver=None, uri: str = None, user: str = None, password: str = None):
         if driver is not None:
-            # Use existing driver
             self.driver = driver
-            self.uri = "provided_driver"
-            self.user = "provided_driver"
-            self.password = "provided_driver"
-            logger.info("Using provided Neo4j driver")
         else:
-            # Create new driver
-            self.uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
-            self.user = user or os.getenv("NEO4J_USER", "neo4j")
-            self.password = password or os.getenv("NEO4J_PASSWORD", "password")
-            logger.info(f"Attempting to connect to Neo4j at {self.uri} with user {self.user}")
-            try:
-                self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
-                logger.info(f"Successfully connected to Neo4j at {self.uri}")
-            except Exception as e:
-                logger.error(f"Failed to connect to Neo4j at {self.uri}: {e}")
-                raise
+            uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+            user = os.getenv("NEO4J_USER", "neo4j")
+            password = os.getenv("NEO4J_PASSWORD", "password")
+            self.driver = GraphDatabase.driver(uri, auth=(user, password))
 
-    def close(self):
-        """Close the database connection"""
-        if self.driver:
+    def close(self) -> None:
+        try:
             self.driver.close()
+        except Exception:
+            pass
 
-    def create_vector_index(
-        self, label: str, property_name: str = "embedding", dimension: int = 768, similarity: str = "cosine"
-    ):
-        """Create a vector index for semantic search"""
-        logger.info(
-            f"Creating vector index for {label}.{property_name} with dimension {dimension} and similarity {similarity}"
-        )
+    # ---------------------- Low-level helpers ----------------------
+    def _run(self, query: str, **params):
+        # Consume results inside the session to avoid using a lazy Result after session closes
         with self.driver.session() as session:
-            try:
-                # Check if index already exists
-                check_query = """
-                SHOW INDEXES YIELD name, labelsOrTypes, properties, type
-                WHERE type = 'VECTOR' AND $label IN labelsOrTypes AND $property IN properties
-                RETURN count(*) as count
-                """
-                result = session.run(check_query, label=label, property=property_name)
-                count = result.single()["count"]
+            result = session.run(query, **params)
+            return list(result)
 
-                if count > 0:
-                    logger.info(f"Vector index for {label}.{property_name} already exists")
-                    return
-
-                # Create vector index
-                query = """
-                CALL db.index.vector.createNodeIndex(
-                    $index_name, $label, $property, $dimension, $similarity
-                )
-                """
-                index_name = f"{label}_{property_name}_vector_index"
-                session.run(
-                    query,
-                    index_name=index_name,
-                    label=label,
-                    property=property_name,
-                    dimension=dimension,
-                    similarity=similarity,
-                )
-                logger.info(f"Successfully created vector index: {index_name}")
-            except Exception as e:
-                logger.error(f"Failed to create vector index for {label}.{property_name}: {e}")
-                raise
-
-    def search_by_vector(
-        self, embedding: List[float], label: str = "Work", property_name: str = "embedding", limit: int = 10
-    ) -> List[Dict[str, Any]]:
-        """Search nodes by vector similarity"""
-        logger.info(f"Searching by vector similarity for {label} nodes, limit: {limit}")
-        with self.driver.session() as session:
-            query = """
-            CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
-            YIELD node, score
-            OPTIONAL MATCH (node)-[:CREATED_BY]->(a:Author)
-            OPTIONAL MATCH (node)-[:PUBLISHED_IN]->(m:Magazine)
-            OPTIONAL MATCH (m)-[:PUBLISHED_BY]->(p:Publisher)
-            OPTIONAL MATCH (s:Series)-[:CONTAINS]->(node)
-            RETURN node.id as work_id, node.title as title, node.published_date as published_date,
-                   node.first_published as first_published, node.last_published as last_published,
-                   collect(DISTINCT a.name) as creators,
-                   collect(DISTINCT p.name) as publishers,
-                   collect(DISTINCT m.title) as magazines,
-                   node.genre as genre, node.isbn as isbn, node.volume as volume,
-                   s.id as series_id, s.name as series_name,
-                   score
-            ORDER BY score DESC
-            """
-
-            try:
-                index_name = f"{label}_{property_name}_vector_index"
-                result = session.run(query, index_name=index_name, limit=limit, embedding=embedding)
-                # result = session.run(query, limit=limit, embedding=embedding)
-                works = []
-                for record in result:
-                    work = {
-                        "work_id": record["work_id"],
-                        "title": record["title"],
-                        "published_date": record["published_date"],
-                        "first_published": record["first_published"],
-                        "last_published": record["last_published"],
-                        "creators": [c for c in record["creators"] if c],
-                        "publishers": [p for p in record["publishers"] if p],
-                        "magazines": [m for m in record["magazines"] if m],
-                        "genre": record["genre"],
-                        "isbn": record["isbn"],
-                        "volume": record["volume"],
-                        "series_id": record["series_id"],
-                        "series_name": record["series_name"],
-                        "similarity_score": record["score"],
-                    }
-                    works.append(work)
-
-                logger.info(f"Found {len(works)} works by vector similarity")
-                return works
-
-            except Exception as e:
-                logger.error(f"Vector search failed: {e}")
-                return []
-
-    def search_work_synopsis_by_vector(
-        self, embedding: List[float], limit: int = 10, label: str = "Work", property_name: str = "synopsis_embedding"
-    ) -> List[Dict[str, Any]]:
-        """Search Work nodes by synopsis embedding similarity and return title + synopsis.
-
-        Expects a vector index to have been created beforehand for Work.synopsis_embedding via
-        create_vector_index(label="Work", property_name="synopsis_embedding", ...).
-        """
-        logger.info(
-            f"Searching by synopsis embedding similarity for {label} nodes (property: {property_name}), limit: {limit}"
-        )
-        with self.driver.session() as session:
-            query = """
-            CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
-            YIELD node, score
-            RETURN node.id as work_id, node.title as title, node.synopsis as synopsis, score
-            ORDER BY score DESC
-            """
-            try:
-                index_name = f"{label}_{property_name}_vector_index"
-                result = session.run(query, index_name=index_name, limit=limit, embedding=embedding)
-                works: List[Dict[str, Any]] = []
-                for record in result:
-                    works.append(
-                        {
-                            "work_id": record["work_id"],
-                            "title": record["title"],
-                            "synopsis": record.get("synopsis"),
-                            "similarity_score": record["score"],
-                        }
-                    )
-                logger.info(f"Found {len(works)} works by synopsis embedding similarity")
-                return works
-            except Exception as e:
-                logger.error(f"Synopsis vector search failed: {e}")
-                return []
-
-    def add_embedding_to_work(self, work_id: str, embedding: List[float]):
-        """Add embedding vector to a work node"""
-        logger.info(f"Adding embedding to work: {work_id}")
-        with self.driver.session() as session:
-            query = """
-            MATCH (w:Work {id: $work_id})
-            SET w.embedding = $embedding
-            RETURN w.id as work_id
-            """
-            result = session.run(query, work_id=work_id, embedding=embedding)
-            record = result.single()
-            if record:
-                logger.info(f"Successfully added embedding to work: {work_id}")
-                return True
-            else:
-                logger.warning(f"Work not found: {work_id}")
-                return False
-
-    def search_manga_works_with_vector(
-        self, search_term: str = None, embedding: List[float] = None, limit: int = 20
-    ) -> List[Dict[str, Any]]:
-        """Search for manga works using both text and vector similarity"""
-        logger.info(
-            f"Searching manga works with text: '{search_term}' and vector: {embedding is not None}, limit: {limit}"
-        )
-
-        if embedding and search_term:
-            # Hybrid search: combine text and vector search
-            text_results = self.search_manga_works(search_term, limit // 2)
-            vector_results = self.search_by_vector(embedding, limit=limit // 2)
-
-            # Combine results and deduplicate
-            combined_results = {}
-
-            # Add text results with lower score
-            for work in text_results:
-                combined_results[work["work_id"]] = {**work, "search_score": 0.5}
-
-            # Add vector results with higher score
-            for work in vector_results:
-                work_id = work["work_id"]
-                if work_id in combined_results:
-                    # Boost score for works found in both searches
-                    combined_results[work_id]["search_score"] = 0.8 + work.get("similarity_score", 0) * 0.2
-                else:
-                    combined_results[work_id] = {**work, "search_score": work.get("similarity_score", 0)}
-
-            # Sort by score and return
-            sorted_results = sorted(combined_results.values(), key=lambda x: x.get("search_score", 0), reverse=True)
-            return sorted_results[:limit]
-
-        elif embedding:
-            # Vector search only
-            return self.search_by_vector(embedding, limit=limit)
-        elif search_term:
-            # Text search only
-            return self.search_manga_works(search_term, limit)
-        else:
-            return []
-
+    # ---------------------- Public queries ------------------------
     def search_manga_works(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """Search for manga works by title, grouping by series"""
-        logger.info(f"Searching for manga works with term: '{search_term}', limit: {limit}")
-        with self.driver.session() as session:
-            # First, get all matching works and publications
-            query = """
-            MATCH (w:Work)
-            WHERE toLower(w.title) CONTAINS toLower($search_term)
-            OPTIONAL MATCH (w)-[:CREATED_BY]->(a:Author)
-            OPTIONAL MATCH (w)-[:PUBLISHED_IN]->(m:Magazine)
-            OPTIONAL MATCH (m)-[:PUBLISHED_BY]->(p:Publisher)
-            OPTIONAL MATCH (s:Series)-[:CONTAINS]->(w)
-            OPTIONAL MATCH (pub:Publication)-[:RELATED_TO]->(w)
-            OPTIONAL MATCH (pub)-[:PUBLISHED_IN_MAGAZINE]->(m2:Magazine)
-            RETURN w.id as work_id, w.title as title, w.published_date as published_date,
-                   w.first_published as first_published, w.last_published as last_published,
-                   collect(DISTINCT a.name) as creators,
-                   collect(DISTINCT p.name) as publishers,
-                   collect(DISTINCT m.title) as magazines,
-                   w.genre as genre, w.isbn as isbn, w.volume as volume,
-                   w.total_volumes as total_volumes,
-                   s.id as series_id, s.name as series_name
-            ORDER BY w.title, w.published_date
-            """
-
-            logger.debug(f"Running query with search_term: {search_term}")
-            result = session.run(query, search_term=search_term)
-            all_works = []
-
-            for record in result:
-                work = {
+        query = """
+        MATCH (w:Work)
+        WHERE toLower(w.title) CONTAINS toLower($term)
+        OPTIONAL MATCH (w)-[:CREATED_BY]->(a:Author)
+        OPTIONAL MATCH (w)-[:PUBLISHED_IN]->(m:Magazine)-[:PUBLISHED_BY]->(p:Publisher)
+        RETURN w.id AS work_id,
+               w.title AS title,
+               w.genre AS genre,
+               w.first_published AS first_published,
+               w.last_published AS last_published,
+               w.total_volumes AS total_volumes,
+               collect(DISTINCT a.name) AS creators,
+               collect(DISTINCT m.title) AS magazines,
+               collect(DISTINCT p.name) AS publishers
+        ORDER BY w.title
+        LIMIT $limit
+        """
+        result = self._run(query, term=search_term, limit=limit)
+        works: List[Dict[str, Any]] = []
+        for record in result:
+            works.append(
+                {
                     "work_id": record["work_id"],
                     "title": record["title"],
-                    "published_date": record["published_date"],
-                    "first_published": record["first_published"],
-                    "last_published": record["last_published"],
-                    "creators": [c for c in record["creators"] if c],
-                    "publishers": [p for p in record["publishers"] if p],
-                    "magazines": [m for m in record["magazines"] if m],
-                    "genre": record["genre"],
-                    "isbn": record["isbn"],
-                    "volume": record["volume"],
+                    "genre": record.get("genre"),
+                    "first_published": record.get("first_published"),
+                    "last_published": record.get("last_published"),
                     "total_volumes": record.get("total_volumes"),
-                    "series_id": record["series_id"],
-                    "series_name": record["series_name"],
+                    "creators": [c for c in (record.get("creators") or []) if c],
+                    "magazines": [m for m in (record.get("magazines") or []) if m],
+                    "publishers": [p for p in (record.get("publishers") or []) if p],
                 }
-                all_works.append(work)
-
-            logger.info(f"Found {len(all_works)} works matching '{search_term}'")
-
-            # Group works by series or base title
-            series_groups = {}
-            series_name_to_key = {}  # シリーズ名からキーへのマッピング
-            standalone_works = []
-
-            for work in all_works:
-                if work["series_id"]:
-                    # シリーズ名を取得
-                    series_name = work["series_name"] or self._extract_base_title(work["title"])
-
-                    # 既存のシリーズ名と一致するかチェック
-                    if series_name in series_name_to_key:
-                        # 既存のグループに追加
-                        series_key = series_name_to_key[series_name]
-                    else:
-                        # 新しいシリーズキーとして登録
-                        series_key = work["series_id"]
-                        series_name_to_key[series_name] = series_key
-                        series_groups[series_key] = {
-                            "series_id": work["series_id"],
-                            "series_name": series_name,
-                            "works": [],
-                            "creators": set(),
-                            "publishers": set(),
-                            "earliest_date": work["published_date"],
-                            "latest_date": work["published_date"],
-                            "volumes": [],
-                        }
-
-                    series_groups[series_key]["works"].append(work)
-                    series_groups[series_key]["creators"].update(work["creators"])
-                    series_groups[series_key]["publishers"].update(work["publishers"])
-                    if "magazines" not in series_groups[series_key]:
-                        series_groups[series_key]["magazines"] = set()
-                    series_groups[series_key]["magazines"].update(work["magazines"])
-                    if work["volume"]:
-                        series_groups[series_key]["volumes"].append(work["volume"])
-                    # 最も古い日付と新しい日付を更新
-                    if work["published_date"] and work["published_date"] < series_groups[series_key]["earliest_date"]:
-                        series_groups[series_key]["earliest_date"] = work["published_date"]
-                    if work["published_date"] and work["published_date"] > series_groups[series_key]["latest_date"]:
-                        series_groups[series_key]["latest_date"] = work["published_date"]
-                else:
-                    # シリーズIDがない場合は、タイトルから基本タイトルを抽出してグループ化を試みる
-                    base_title = self._extract_base_title(work["title"])
-
-                    # 既存のシリーズ名とマッチするかチェック
-                    found_group = False
-                    for existing_series_name, series_key in series_name_to_key.items():
-                        if base_title == existing_series_name or base_title == self._extract_base_title(
-                            existing_series_name
-                        ):
-                            # 既存のグループに追加
-                            series_groups[series_key]["works"].append(work)
-                            series_groups[series_key]["creators"].update(work["creators"])
-                            series_groups[series_key]["publishers"].update(work["publishers"])
-                            if "magazines" not in series_groups[series_key]:
-                                series_groups[series_key]["magazines"] = set()
-                            series_groups[series_key]["magazines"].update(work["magazines"])
-                            if work["volume"]:
-                                series_groups[series_key]["volumes"].append(work["volume"])
-                            # 日付を更新
-                            if (
-                                work["published_date"]
-                                and work["published_date"] < series_groups[series_key]["earliest_date"]
-                            ):
-                                series_groups[series_key]["earliest_date"] = work["published_date"]
-                            if (
-                                work["published_date"]
-                                and work["published_date"] > series_groups[series_key]["latest_date"]
-                            ):
-                                series_groups[series_key]["latest_date"] = work["published_date"]
-                            found_group = True
-                            break
-
-                    if not found_group:
-                        # 新しいグループを作成
-                        series_key = f"series_{abs(hash(base_title))}"
-                        series_name_to_key[base_title] = series_key
-                        series_groups[series_key] = {
-                            "series_id": series_key,
-                            "series_name": base_title,
-                            "works": [work],
-                            "creators": set(work["creators"]),
-                            "publishers": set(work["publishers"]),
-                            "magazines": set(work["magazines"]),
-                            "earliest_date": work["published_date"],
-                            "latest_date": work["published_date"],
-                            "volumes": [work["volume"]] if work["volume"] else [],
-                        }
-
-            # Convert groups to single works representing the series
-            consolidated_works = []
-            for group_data in series_groups.values():
-                # 複数の作品がある場合は最初の巻を返す
-                if len(group_data["works"]) > 1:
-                    # 巻数でソートして最初の巻を選択、巻数がない場合は出版日でソート
-                    def sort_key(work):
-                        volume = work.get("volume", "")
-                        if volume and str(volume).strip():
-                            # 巻数を数値として抽出
-                            import re
-
-                            volume_match = re.search(r"(\d+)", str(volume))
-                            if volume_match:
-                                volume_num = int(volume_match.group(1))
-                                # 1巻がある場合は最優先
-                                if volume_num == 1:
-                                    return (0, 1)
-                                return (0, volume_num)  # 巻数がある場合は優先度0
-                        # 巻数がない場合は出版日を使用し、最も古い日付を優先
-                        published_date = work.get("published_date", "9999-99-99")
-                        if not published_date:
-                            published_date = "9999-99-99"
-                        return (1, published_date)  # 巻数がない場合は優先度1
-
-                    sorted_works = sorted(group_data["works"], key=sort_key)
-
-                    # 第1巻を探す（なければ最初の巻を使用）
-                    first_volume_work = None
-                    for work in sorted_works:
-                        volume = work.get("volume", "")
-                        if volume and str(volume).strip():
-                            import re
-
-                            volume_match = re.search(r"(\d+)", str(volume))
-                            if volume_match and int(volume_match.group(1)) == 1:
-                                first_volume_work = work
-                                logger.debug(f"Found volume 1 for series: {work['title']} (ID: {work['work_id']})")
-                                break
-
-                    # 第1巻が見つからない場合は、ソート済みリストの最初を使用
-                    if not first_volume_work:
-                        first_volume_work = sorted_works[0]
-                        logger.debug(
-                            f"Volume 1 not found, using first sorted work: {first_volume_work['title']} "
-                            f"(ID: {first_volume_work['work_id']}, volume: {first_volume_work.get('volume', 'N/A')})"
-                        )
-
-                    # タイトルから巻数表記を除去
-                    base_title = self._extract_base_title(first_volume_work["title"])
-
-                    # シリーズ全体のfirst_publishedとlast_publishedを計算
-                    all_first_dates = [w["first_published"] for w in group_data["works"] if w.get("first_published")]
-                    all_last_dates = [w["last_published"] for w in group_data["works"] if w.get("last_published")]
-
-                    series_first_published = (
-                        min(all_first_dates) if all_first_dates else first_volume_work.get("first_published")
-                    )
-                    series_last_published = (
-                        max(all_last_dates) if all_last_dates else first_volume_work.get("last_published")
-                    )
-
-                    series_work = {
-                        "work_id": first_volume_work["work_id"],  # 第1巻のIDを使用
-                        "title": base_title,  # 巻数を除去したタイトル
-                        "published_date": first_volume_work["published_date"],
-                        "first_published": series_first_published,
-                        "last_published": series_last_published,
-                        "creators": list(group_data["creators"]),  # シリーズ全体のクリエイター
-                        "publishers": list(group_data["publishers"]),  # シリーズ全体の出版社
-                        "magazines": list(group_data["magazines"]),  # シリーズ全体の雑誌
-                        "genre": first_volume_work["genre"],
-                        "isbn": first_volume_work["isbn"],
-                        "volume": "1",  # シリーズは常に第1巻として表示
-                        "is_series": True,
-                        "work_count": len(group_data["works"]),
-                        "series_volumes": f"{len(group_data['works'])}巻",  # シリーズ全体の巻数情報
-                        "individual_works": group_data["works"],  # 個別作品の情報を保持
-                        # total_volumes が個々のノードに設定されている場合は最大値、なければ作品数
-                        "total_volumes": max(
-                            [int(v) for v in [w.get("total_volumes") for w in group_data["works"]] if str(v).isdigit()]
-                            or [len(group_data["works"])]
-                        ),
-                    }
-                    consolidated_works.append(series_work)
-                else:
-                    # 単一作品の場合はそのまま使用
-                    single_work = group_data["works"][0]
-                    single_work["is_series"] = False
-                    single_work["work_count"] = 1
-                    if "total_volumes" not in single_work or single_work.get("total_volumes") in (None, ""):
-                        # total_volumes が無ければ 単巻の場合は 1 とする
-                        single_work["total_volumes"] = 1
-                    consolidated_works.append(single_work)
-
-            # Add standalone works
-            consolidated_works.extend(standalone_works)
-
-            # Sort by title and limit results
-            consolidated_works.sort(key=lambda x: x["title"])
-            return consolidated_works[:limit]
-
-    def _extract_base_title(self, title: str) -> str:
-        """Extract base title by removing volume numbers and other suffixes"""
-        import re
-
-        if not title:
-            return title
-
-        # パターンで巻数や番号を除去
-        patterns = [
-            r"\s*\d+$",  # 末尾の数字
-            r"\s*第\d+巻?$",  # 第X巻
-            r"\s*\(\d+\)$",  # (数字)
-            r"\s*vol\.\s*\d+$",  # vol. X
-            r"\s*VOLUME\s*\d+$",  # VOLUME X
-            r"\s*巻\d+$",  # 巻X
-            r"\s*その\d+$",  # そのX
-            r"\s*メガ盛り.*$",  # メガ盛りmenu等の特殊版
-            r"\s*完全版.*$",  # 完全版
-            r"\s*新装版.*$",  # 新装版
-            r"\s*愛蔵版.*$",  # 愛蔵版
-            r"\s*文庫版.*$",  # 文庫版
-        ]
-
-        base = title
-        for pattern in patterns:
-            base = re.sub(pattern, "", base, flags=re.IGNORECASE)
-
-        return base.strip()
-
-    def get_related_works_by_author(self, work_id: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get related works by the same author"""
-        with self.driver.session() as session:
-            query = """
-            MATCH (w1:Work {id: $work_id})-[:CREATED_BY]->(a:Author)<-[:CREATED_BY]-(w2:Work)
-            WHERE w1.id <> w2.id
-         RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
-             w2.total_volumes as total_volumes,
-                   a.name as author_name, 500 as relevance_score
-            LIMIT $limit
-            """
-
-            result = session.run(query, work_id=work_id, limit=limit)
-            return [dict(record) for record in result]
-
-    def get_related_works_by_publisher(self, work_id: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get related works by the same publisher"""
-        with self.driver.session() as session:
-            query = """
-            MATCH (w1:Work {id: $work_id})-[:PUBLISHED_IN]->(m:Magazine)<-[:PUBLISHED_IN]-(w2:Work)
-            WHERE w1.id <> w2.id
-         RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
-             w2.total_volumes as total_volumes,
-                   m.title as magazine_name
-            LIMIT $limit
-            """
-
-            result = session.run(query, work_id=work_id, limit=limit)
-            return [dict(record) for record in result]
-
-    def get_related_works_by_publication_period(
-        self, work_id: str, year_range: int = 5, limit: int = 10
-    ) -> List[Dict[str, Any]]:
-        """Get works published in the same period"""
-        with self.driver.session() as session:
-            query = """
-            MATCH (w1:Work {id: $work_id})
-            WHERE w1.published_date IS NOT NULL AND w1.published_date <> ''
-            WITH w1, toInteger(substring(w1.published_date, 0, 4)) as year1
-            MATCH (w2:Work)
-            WHERE w2.published_date IS NOT NULL AND w2.published_date <> ''
-            AND w1.id <> w2.id
-            WITH w1, w2, year1, toInteger(substring(w2.published_date, 0, 4)) as year2
-            WHERE abs(year1 - year2) <= $year_range
-            OPTIONAL MATCH (w2)-[:CREATED_BY]->(a:Author)
-         RETURN w2.id as work_id, w2.title as title, w2.published_date as published_date,
-             w2.total_volumes as total_volumes,
-                   collect(DISTINCT a.name) as creators,
-                   abs(year1 - year2) as year_diff, 100 as relevance_score
-            ORDER BY year_diff ASC
-            LIMIT $limit
-            """
-
-            result = session.run(query, work_id=work_id, year_range=year_range, limit=limit)
-            return [dict(record) for record in result]
-
-    def get_related_works_by_magazine_and_period(
-        self, work_id: str, year_range: int = 2, limit: int = 20
-    ) -> List[Dict[str, Any]]:
-        """Get works published in the same magazine during overlapping periods"""
-        logger.info(f"get_related_works_by_magazine_and_period called with work_id: {work_id}, limit: {limit}")
-        with self.driver.session() as session:
-            # 同じ雑誌で連載期間が重複する作品を取得
-            query = """
-            MATCH (w1:Work {id: $work_id})-[:PUBLISHED_IN]->(m:Magazine)
-            WITH w1, m,
-                 toInteger(coalesce(substring(w1.first_published, 0, 4), substring(w1.last_published, 0, 4), "1900")) as start_year1,
-                 toInteger(coalesce(substring(w1.last_published, 0, 4), substring(w1.first_published, 0, 4), "2100")) as end_year1
-            MATCH (w2:Work)-[:PUBLISHED_IN]->(m)
-            WHERE w1.id <> w2.id
-            WITH w1, w2, m, start_year1, end_year1,
-                 toInteger(coalesce(substring(w2.first_published, 0, 4), substring(w2.last_published, 0, 4), "1900")) as start_year2,
-                 toInteger(coalesce(substring(w2.last_published, 0, 4), substring(w2.first_published, 0, 4), "2100")) as end_year2
-            WHERE start_year2 <= end_year1 AND end_year2 >= start_year1
-            WITH w2, m, start_year1, end_year1, start_year2, end_year2,
-                 CASE
-                   WHEN start_year2 >= start_year1 AND end_year2 <= end_year1 THEN end_year2 - start_year2 + 1
-                   WHEN start_year1 >= start_year2 AND end_year1 <= end_year2 THEN end_year1 - start_year1 + 1
-                   WHEN start_year2 <= start_year1 AND end_year2 >= start_year1 THEN end_year2 - start_year1 + 1
-                   WHEN start_year1 <= start_year2 AND end_year1 >= start_year2 THEN end_year1 - start_year2 + 1
-                   ELSE 0
-                 END as overlap_years,
-                 CASE
-                   WHEN end_year2 - start_year2 + 1 > 0 THEN
-                     toFloat(CASE
-                       WHEN start_year2 >= start_year1 AND end_year2 <= end_year1 THEN end_year2 - start_year2 + 1
-                       WHEN start_year1 >= start_year2 AND end_year1 <= end_year2 THEN end_year1 - start_year1 + 1
-                       WHEN start_year2 <= start_year1 AND end_year2 >= start_year1 THEN end_year2 - start_year1 + 1
-                       WHEN start_year1 <= start_year2 AND end_year1 >= start_year2 THEN end_year1 - start_year2 + 1
-                       ELSE 0
-                     END) / toFloat(end_year2 - start_year2 + 1)
-                   ELSE 0.0
-                 END as overlap_ratio,
-                 CASE
-                   WHEN (end_year1 - start_year1 + 1) + (end_year2 - start_year2 + 1) > 0 THEN
-                     toFloat(CASE
-                       WHEN start_year2 >= start_year1 AND end_year2 <= end_year1 THEN end_year2 - start_year2 + 1
-                       WHEN start_year1 >= start_year2 AND end_year1 <= end_year2 THEN end_year1 - start_year1 + 1
-                       WHEN start_year2 <= start_year1 AND end_year2 >= start_year1 THEN end_year2 - start_year1 + 1
-                       WHEN start_year1 <= start_year2 AND end_year1 >= start_year2 THEN end_year1 - start_year2 + 1
-                       ELSE 0
-                     END) / toFloat((end_year1 - start_year1 + 1) + (end_year2 - start_year2 + 1) - CASE
-                       WHEN start_year2 >= start_year1 AND end_year2 <= end_year1 THEN end_year2 - start_year2 + 1
-                       WHEN start_year1 >= start_year2 AND end_year1 <= end_year2 THEN end_year1 - start_year1 + 1
-                       WHEN start_year2 <= start_year1 AND end_year2 >= start_year1 THEN end_year2 - start_year1 + 1
-                       WHEN start_year1 <= start_year2 AND end_year1 >= start_year2 THEN end_year1 - start_year2 + 1
-                       ELSE 0
-                     END)
-                   ELSE 0.0
-                 END as jaccard_similarity
-            WHERE overlap_years > 0
-            OPTIONAL MATCH (w2)-[:CREATED_BY]->(a:Author)
-            OPTIONAL MATCH (m)-[:PUBLISHED_BY]->(p:Publisher)
-            RETURN w2.id as work_id, w2.title as title,
-                   w2.first_published as first_published, w2.last_published as last_published,
-                   w2.total_volumes as total_volumes,
-                   collect(DISTINCT a.name) as creators,
-                   m.title as magazine_name,
-                   p.name as publisher_name,
-                   overlap_years, overlap_ratio, jaccard_similarity,
-                   start_year2 as start_year, end_year2 as end_year,
-                   toInteger(1000 + (jaccard_similarity * 1000)) as relevance_score
-            ORDER BY relevance_score DESC, jaccard_similarity DESC, overlap_years DESC, start_year2 ASC
-            LIMIT $limit
-            """
-
-            result = session.run(query, work_id=work_id, year_range=year_range, limit=limit)
-            results = [dict(record) for record in result]
-            logger.info(f"Query returned {len(results)} results")
-            for idx, r in enumerate(results[:5]):  # Log first 5 results
-                logger.info(
-                    "Result %d: %s (overlap: %s years, ratio: %.2f, jaccard: %.3f, score: %s)",
-                    idx,
-                    r["title"],
-                    r.get("overlap_years"),
-                    r.get("overlap_ratio", 0.0),
-                    r.get("jaccard_similarity", 0.0),
-                    r.get("relevance_score"),
-                )
-            return results
+            )
+        return works
 
     def search_manga_publications(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """Search for manga publications (magazine serializations) by title"""
-        logger.info(f"Searching for manga publications with term: '{search_term}', limit: {limit}")
-
-        with self.driver.session() as session:
-            query = """
-            MATCH (p:Publication)
-            WHERE toLower(p.title) CONTAINS toLower($search_term)
-            OPTIONAL MATCH (a:Author)-[:CREATED_PUBLICATION]->(p)
-            OPTIONAL MATCH (p)-[:PUBLISHED_IN_MAGAZINE]->(m:Magazine)
-            OPTIONAL MATCH (p)-[:PUBLISHED_IN]->(mi:MagazineIssue)-[:ISSUE_OF]->(m2:Magazine)
-            RETURN p.id as publication_id, p.title as title, p.publication_date as publication_date,
-                   collect(DISTINCT a.name) as creators,
-                   collect(DISTINCT coalesce(m.name, m2.name)) as magazines,
-                   p.genre as genre
-            ORDER BY p.title, p.publication_date
-            LIMIT $limit
-            """
-
-            logger.debug(f"Running publication query with search_term: {search_term}")
-            result = session.run(query, search_term=search_term, limit=limit)
-            publications = []
-
-            for record in result:
-                publication = {
+        query = """
+        MATCH (p:Publication)
+        WHERE toLower(p.title) CONTAINS toLower($term)
+        OPTIONAL MATCH (a:Author)-[:CREATED_PUBLICATION]->(p)
+        OPTIONAL MATCH (p)-[:PUBLISHED_IN_MAGAZINE]->(m:Magazine)
+        OPTIONAL MATCH (p)-[:PUBLISHED_IN]->(mi:MagazineIssue)-[:ISSUE_OF]->(m2:Magazine)
+        RETURN p.id as publication_id, p.title as title, p.publication_date as publication_date,
+               collect(DISTINCT a.name) as creators,
+               collect(DISTINCT coalesce(m.name, m2.name)) as magazines,
+               p.genre as genre
+        ORDER BY p.title, p.publication_date
+        LIMIT $limit
+        """
+        result = self._run(query, term=search_term, limit=limit)
+        publications: List[Dict[str, Any]] = []
+        for record in result:
+            publications.append(
+                {
                     "publication_id": record["publication_id"],
                     "title": record["title"],
-                    "publication_date": record["publication_date"],
-                    "creators": [c for c in record["creators"] if c],
-                    "magazines": [m for m in record["magazines"] if m],
-                    "genre": record["genre"],
+                    "publication_date": record.get("publication_date"),
+                    "creators": [c for c in (record.get("creators") or []) if c],
+                    "magazines": [m for m in (record.get("magazines") or []) if m],
+                    "genre": record.get("genre"),
                 }
-                publications.append(publication)
+            )
+        return publications
 
-            logger.info(f"Found {len(publications)} publications matching '{search_term}'")
-            return publications
+    # ------------- Related helpers (author/period/magazine) -------------
+    def get_related_works_by_author(self, work_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+        query = """
+        MATCH (w:Work {id: $work_id})-[:CREATED_BY]->(a:Author)
+        MATCH (a)<-[:CREATED_BY]-(other:Work)
+        WHERE other.id <> $work_id
+        OPTIONAL MATCH (other)-[:PUBLISHED_IN]->(m:Magazine)-[:PUBLISHED_BY]->(p:Publisher)
+        OPTIONAL MATCH (other)-[:CREATED_BY]->(ca:Author)
+        RETURN other.id AS work_id,
+               other.title AS title,
+               other.total_volumes AS total_volumes,
+               head(collect(DISTINCT a.name)) AS author_name,
+               head(collect(DISTINCT m.title)) AS magazine_name,
+               head(collect(DISTINCT p.name)) AS publisher_name,
+               collect(DISTINCT ca.name) AS creators,
+               500 AS relevance_score
+        LIMIT $limit
+        """
+        result = self._run(query, work_id=work_id, limit=limit)
+        return [dict(r) for r in result]
 
+    def get_related_works_by_magazine_and_period(
+        self, work_id: str, year_window: int, limit: int
+    ) -> List[Dict[str, Any]]:
+        query = """
+        MATCH (w:Work {id: $work_id})-[:PUBLISHED_IN]->(m:Magazine)
+        OPTIONAL MATCH (w)<-[:CREATED_BY]-(aw:Author)
+        WITH w, m, collect(DISTINCT aw) AS authors
+        MATCH (other:Work)-[:PUBLISHED_IN]->(m)
+        WHERE other.id <> w.id
+        WITH w, m, other, authors
+        OPTIONAL MATCH (other)-[:CREATED_BY]->(oa:Author)
+        WITH w, m, other, authors, collect(DISTINCT oa.name) AS creators
+        RETURN other.id AS work_id,
+               other.title AS title,
+               other.total_volumes AS total_volumes,
+               m.title AS magazine_name,
+               creators AS creators,
+               1000 AS relevance_score,
+               0 AS overlap_years,
+               0.0 AS overlap_ratio,
+               0.0 AS jaccard_similarity,
+               head(creators) AS publisher_name
+        LIMIT $limit
+        """
+        result = self._run(query, work_id=work_id, year_window=year_window, limit=limit)
+        return [dict(r) for r in result]
+
+    def get_related_works_by_publication_period(self, work_id: str, before: int, after: int) -> List[Dict[str, Any]]:
+        query = """
+        MATCH (w:Work {id: $work_id})
+        MATCH (other:Work)
+        WHERE other.id <> w.id
+        OPTIONAL MATCH (other)-[:CREATED_BY]->(a:Author)
+        RETURN other.id AS work_id,
+               other.title AS title,
+               other.total_volumes AS total_volumes,
+               collect(DISTINCT a.name) AS creators,
+               100 AS relevance_score
+        LIMIT 20
+        """
+        result = self._run(query, work_id=work_id, before=before, after=after)
+        return [dict(r) for r in result]
+
+    # ---------------------- Main graph query ----------------------
     def search_manga_data_with_related(
         self,
         search_term: str,
         limit: int = 20,
         include_related: bool = True,
+        include_same_publisher_other_magazines: Optional[bool] = False,
+        same_publisher_other_magazines_limit: Optional[int] = 5,
         sort_total_volumes: Optional[str] = None,
         min_total_volumes: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Search manga data and include related works for graph visualization"""
         logger.info(
-            f"search_manga_data_with_related called with term: '{search_term}', limit: {limit}, include_related: {include_related}"
+            "search_manga_data_with_related term=%s limit=%s include_related=%s include_same_pub_other_mag=%s same_pub_other_mag_limit=%s",
+            search_term,
+            limit,
+            include_related,
+            include_same_publisher_other_magazines,
+            same_publisher_other_magazines_limit,
         )
 
         main_works = self.search_manga_works(search_term, limit)
-
-        # Optional filtering by minimum total_volumes (main works first)
         if min_total_volumes is not None:
             filtered = [
                 w for w in main_works if (int(w.get("total_volumes", w.get("work_count", 0)) or 0) >= min_total_volumes)
             ]
-            # If empty fallback (disable filter for main list)
             if filtered:
                 main_works = filtered
 
-        # total_volumes でのソート要求がある場合に適用（main_works は search_manga_works の結果）
         if sort_total_volumes in ("asc", "desc"):
 
-            def extract_total(w):
+            def _extract_total(w: Dict[str, Any]) -> int:
                 tv = w.get("total_volumes") or w.get("work_count") or 0
                 try:
                     return int(tv)
                 except Exception:
-                    # '全10巻' 等の文字列を抽出
                     import re
 
                     m = re.search(r"(\d+)", str(tv))
                     return int(m.group(1)) if m else 0
 
-            reverse = sort_total_volumes == "desc"
-            main_works.sort(key=extract_total, reverse=reverse)
+            main_works.sort(key=_extract_total, reverse=sort_total_volumes == "desc")
 
-        # Also search for publications (magazine serializations)
         publications = self.search_manga_publications(search_term, limit)
 
-        # メイン作品IDを保持（related 並び替え時に先頭固定）
-        main_work_ids = {w["work_id"] for w in main_works}
+        # (reserved) Keep track of main work ids for potential ordering if needed in future
+        # main_work_ids = {w["work_id"] for w in main_works}
 
         if not main_works and not publications:
-            logger.warning(f"No works or publications found for search term: '{search_term}'")
             return {"nodes": [], "edges": []}
 
-        nodes = []
-        edges = []
-        node_ids_seen = set()  # Track node IDs to prevent duplicates
-        edge_ids_seen = set()  # Track edge IDs to prevent duplicates
+        nodes: List[Dict[str, Any]] = []
+        edges: List[Dict[str, Any]] = []
+        node_ids_seen = set()
+        edge_ids_seen = set()
 
-        # Add main works as nodes
+        # main work nodes
         for work in main_works:
             if work["work_id"] not in node_ids_seen:
-                work_data = {**work, "source": "neo4j"}
-                node = {"id": work["work_id"], "label": work["title"], "type": "work", "properties": work_data}
-                nodes.append(node)
+                nodes.append(
+                    {
+                        "id": work["work_id"],
+                        "label": work["title"],
+                        "type": "work",
+                        "properties": {**work, "source": "neo4j"},
+                    }
+                )
                 node_ids_seen.add(work["work_id"])
 
-        # Add publications as nodes
-        for publication in publications:
-            if publication["publication_id"] not in node_ids_seen:
-                pub_data = {**publication, "source": "neo4j"}
-                node = {
-                    "id": publication["publication_id"],
-                    "label": publication["title"],
-                    "type": "publication",
-                    "properties": pub_data,
-                }
-                nodes.append(node)
-                node_ids_seen.add(publication["publication_id"])
+        # publication nodes + edges
+        for pub in publications:
+            if pub["publication_id"] not in node_ids_seen:
+                nodes.append(
+                    {
+                        "id": pub["publication_id"],
+                        "label": pub["title"],
+                        "type": "publication",
+                        "properties": {**pub, "source": "neo4j"},
+                    }
+                )
+                node_ids_seen.add(pub["publication_id"])
 
-            # Add authors and magazines for publications - collect all creators first
-            all_creators_for_publication = []
-            for creator in publication["creators"]:
-                if creator:
-                    normalized_creators = normalize_and_split_creators(creator)
-                    all_creators_for_publication.extend(normalized_creators)
-
-            # Create individual author nodes for each creator
-            for normalized_creator in all_creators_for_publication:
-                if normalized_creator:
-                    author_id = generate_normalized_id(normalized_creator, "author")
-                    if author_id not in node_ids_seen:
-                        author_node = {
-                            "id": author_id,
-                            "label": normalized_creator,
+            all_creators: List[str] = []
+            for c in pub["creators"]:
+                if c:
+                    all_creators.extend(normalize_and_split_creators(c))
+            for creator in all_creators:
+                if not creator:
+                    continue
+                aid = generate_normalized_id(creator, "author")
+                if aid not in node_ids_seen:
+                    nodes.append(
+                        {
+                            "id": aid,
+                            "label": creator,
                             "type": "author",
-                            "properties": {"source": "neo4j", "name": normalized_creator},
+                            "properties": {"source": "neo4j", "name": creator},
                         }
-                        nodes.append(author_node)
-                        node_ids_seen.add(author_id)
-
-                    edge_id = f"{author_id}-created-{publication['publication_id']}"
-                    if edge_id not in edge_ids_seen:
-                        edge = {
-                            "id": edge_id,
-                            "source": author_id,
-                            "target": publication["publication_id"],
+                    )
+                    node_ids_seen.add(aid)
+                eid = f"{aid}-created-{pub['publication_id']}"
+                if eid not in edge_ids_seen:
+                    edges.append(
+                        {
+                            "id": eid,
+                            "source": aid,
+                            "target": pub["publication_id"],
                             "type": "created",
                             "properties": {"source": "neo4j"},
                         }
-                        edges.append(edge)
-                        edge_ids_seen.add(edge_id)
-
-            # Add magazines for publications
-            for magazine in publication["magazines"]:
-                if magazine:
-                    magazine_id = generate_normalized_id(magazine, "magazine")
-                    if magazine_id not in node_ids_seen:
-                        magazine_node = {
-                            "id": magazine_id,
-                            "label": magazine,
+                    )
+                    edge_ids_seen.add(eid)
+            for m in pub["magazines"]:
+                if not m:
+                    continue
+                mid = generate_normalized_id(m, "magazine")
+                if mid not in node_ids_seen:
+                    nodes.append(
+                        {
+                            "id": mid,
+                            "label": m,
                             "type": "magazine",
-                            "properties": {"source": "neo4j", "name": magazine},
+                            "properties": {"source": "neo4j", "name": m},
                         }
-                        nodes.append(magazine_node)
-                        node_ids_seen.add(magazine_id)
-
-                    edge_id = f"{magazine_id}-published-{publication['publication_id']}"
-                    if edge_id not in edge_ids_seen:
-                        edge = {
-                            "id": edge_id,
-                            "source": magazine_id,
-                            "target": publication["publication_id"],
+                    )
+                    node_ids_seen.add(mid)
+                eid = f"{mid}-published-{pub['publication_id']}"
+                if eid not in edge_ids_seen:
+                    edges.append(
+                        {
+                            "id": eid,
+                            "source": mid,
+                            "target": pub["publication_id"],
                             "type": "published",
                             "properties": {"source": "neo4j"},
                         }
-                        edges.append(edge)
-                        edge_ids_seen.add(edge_id)
+                    )
+                    edge_ids_seen.add(eid)
 
-        # Process main works
+        # enrich main works (authors, magazines)
         for work in main_works:
-            # Add authors as nodes and create edges
-            # First, collect all creators from the work's creators array
-            all_creators_for_work = []
-            for creator in work["creators"]:
-                if creator:
-                    # Split multiple creators and normalize each one
-                    normalized_creators = normalize_and_split_creators(creator)
-                    all_creators_for_work.extend(normalized_creators)
-
-            # Create individual author nodes for each creator
-            for normalized_creator in all_creators_for_work:
-                if normalized_creator:
-                    author_id = generate_normalized_id(normalized_creator, "author")
-                    if author_id not in node_ids_seen:
-                        author_node = {
-                            "id": author_id,
-                            "label": normalized_creator,
+            # authors
+            all_creators: List[str] = []
+            for c in work["creators"]:
+                if c:
+                    all_creators.extend(normalize_and_split_creators(c))
+            for creator in all_creators:
+                if not creator:
+                    continue
+                aid = generate_normalized_id(creator, "author")
+                if aid not in node_ids_seen:
+                    nodes.append(
+                        {
+                            "id": aid,
+                            "label": creator,
                             "type": "author",
-                            "properties": {"source": "neo4j", "name": normalized_creator},
+                            "properties": {"source": "neo4j", "name": creator},
                         }
-                        nodes.append(author_node)
-                        node_ids_seen.add(author_id)
-
-                    edge_id = f"{author_id}-created-{work['work_id']}"
-                    if edge_id not in edge_ids_seen:
-                        edge = {
-                            "id": edge_id,
-                            "source": author_id,
+                    )
+                    node_ids_seen.add(aid)
+                eid = f"{aid}-created-{work['work_id']}"
+                if eid not in edge_ids_seen:
+                    edges.append(
+                        {
+                            "id": eid,
+                            "source": aid,
                             "target": work["work_id"],
                             "type": "created",
                             "properties": {"source": "neo4j"},
                         }
-                        edges.append(edge)
-                        edge_ids_seen.add(edge_id)
-
-            # Add magazines as nodes and create edges (prioritize magazines over publishers)
-            for magazine in work["magazines"]:
-                if magazine:
-                    magazine_id = generate_normalized_id(magazine, "magazine")
-                    if magazine_id not in node_ids_seen:
-                        magazine_node = {
-                            "id": magazine_id,
-                            "label": magazine,
+                    )
+                    edge_ids_seen.add(eid)
+            # magazines
+            for m in work["magazines"]:
+                if not m:
+                    continue
+                mid = generate_normalized_id(m, "magazine")
+                if mid not in node_ids_seen:
+                    nodes.append(
+                        {
+                            "id": mid,
+                            "label": m,
                             "type": "magazine",
-                            "properties": {"source": "neo4j", "name": magazine},
+                            "properties": {"source": "neo4j", "name": m},
                         }
-                        nodes.append(magazine_node)
-                        node_ids_seen.add(magazine_id)
-
-                    edge_id = f"{magazine_id}-published-{work['work_id']}"
-                    if edge_id not in edge_ids_seen:
-                        edge = {
-                            "id": edge_id,
-                            "source": magazine_id,
+                    )
+                    node_ids_seen.add(mid)
+                eid = f"{mid}-published-{work['work_id']}"
+                if eid not in edge_ids_seen:
+                    edges.append(
+                        {
+                            "id": eid,
+                            "source": mid,
                             "target": work["work_id"],
                             "type": "published",
                             "properties": {"source": "neo4j"},
                         }
-                        edges.append(edge)
-                        edge_ids_seen.add(edge_id)
-                # Add publishers as nodes and create edges (only if no magazines)
-                if not work["magazines"]:
-                    for publisher in work["publishers"]:
-                        if publisher:
-                            normalized_publisher = normalize_publisher_name(publisher)
-                            if normalized_publisher:
-                                publisher_id = generate_normalized_id(normalized_publisher, "publisher")
-                                if publisher_id not in node_ids_seen:
-                                    publisher_node = {
-                                        "id": publisher_id,
-                                        "label": normalized_publisher,
-                                        "type": "publisher",
-                                        "properties": {"source": "neo4j", "name": normalized_publisher},
-                                    }
-                                    nodes.append(publisher_node)
-                                    node_ids_seen.add(publisher_id)
-                            edge_id = f"{publisher_id}-published-{work['work_id']}"
-                            if edge_id not in edge_ids_seen:
-                                edge = {
-                                    "id": edge_id,
-                                    "source": publisher_id,
-                                    "target": work["work_id"],
-                                    "type": "published",
-                                    "properties": {"source": "neo4j"},
-                                }
-                                edges.append(edge)
-                                edge_ids_seen.add(edge_id)
+                    )
+                    edge_ids_seen.add(eid)
+            # publishers fallback when no magazines
+            if not work["magazines"]:
+                for p in work["publishers"]:
+                    if not p:
+                        continue
+                    np = normalize_publisher_name(p)
+                    if not np:
+                        continue
+                    pid = generate_normalized_id(np, "publisher")
+                    if pid not in node_ids_seen:
+                        nodes.append(
+                            {
+                                "id": pid,
+                                "label": np,
+                                "type": "publisher",
+                                "properties": {"source": "neo4j", "name": np},
+                            }
+                        )
+                        node_ids_seen.add(pid)
+                    eid = f"{pid}-published-{work['work_id']}"
+                    if eid not in edge_ids_seen:
+                        edges.append(
+                            {
+                                "id": eid,
+                                "source": pid,
+                                "target": work["work_id"],
+                                "type": "published",
+                                "properties": {"source": "neo4j"},
+                            }
+                        )
+                        edge_ids_seen.add(eid)
 
-        # Add related works if requested
+        # include related
         if include_related and main_works:
-            # 最も多くの雑誌関係を持つ作品を選択（通常はメインシリーズ）
-            main_work = None
-            max_magazines = 0
-            for work in main_works:
-                magazine_count = len(work.get("magazines", []))
-                if magazine_count > max_magazines:
-                    max_magazines = magazine_count
-                    main_work = work
-
-            # 雑誌がない場合は最初の作品を使用
-            if main_work is None:
-                main_work = main_works[0]
-
+            main_work = max(main_works, key=lambda w: len(w.get("magazines", []))) if main_works else main_works[0]
             main_work_id = main_work["work_id"]
-            logger.info(f"Selected main work for related search: {main_work['title']} (ID: {main_work_id})")
-            logger.info(
-                f"Main work details - first_published: {main_work.get('first_published')}, last_published: {main_work.get('last_published')}"
-            )
-            logger.info(f"Main work magazines: {main_work.get('magazines', [])}")
 
-            # Add works by same author
             author_related = self.get_related_works_by_author(main_work_id, 5)
             if min_total_volumes is not None:
-                author_related = [
-                    r
-                    for r in author_related
-                    if (int(r.get("total_volumes", r.get("work_count", 0)) or 0) >= min_total_volumes)
-                ]
-            for related in author_related:
-                if related["work_id"] not in node_ids_seen:
-                    related_node = {
-                        "id": related["work_id"],
-                        "label": related["title"],
-                        "type": "work",
-                        "properties": {**related, "source": "neo4j"},
-                        "relevance_score": related.get("relevance_score", 500),
-                    }
-                    nodes.append(related_node)
-                    node_ids_seen.add(related["work_id"])
-
-                # Create author relationship edge
-                normalized_author = normalize_creator_name(related["author_name"])
-                author_id = generate_normalized_id(normalized_author, "author")
-                if author_id in node_ids_seen:
-                    edge_id = f"{author_id}-created-{related['work_id']}"
-                    if edge_id not in edge_ids_seen:
-                        edge = {
-                            "id": edge_id,
-                            "source": author_id,
-                            "target": related["work_id"],
-                            "type": "created",
-                            "properties": {"source": "neo4j"},
+                author_related = [r for r in author_related if int(r.get("total_volumes") or 0) >= min_total_volumes]
+            for r in author_related:
+                if r["work_id"] not in node_ids_seen:
+                    nodes.append(
+                        {
+                            "id": r["work_id"],
+                            "label": r["title"],
+                            "type": "work",
+                            "properties": {**r, "source": "neo4j"},
+                            "relevance_score": r.get("relevance_score", 500),
                         }
-                        edges.append(edge)
-                        edge_ids_seen.add(edge_id)
-
-            # Add works from same magazine and period
-            logger.info(f"Getting magazine period related works for: {main_work_id}")
-            magazine_period_related = self.get_related_works_by_magazine_and_period(main_work_id, 2, 50)
-            if min_total_volumes is not None:
-                magazine_period_related = [
-                    r
-                    for r in magazine_period_related
-                    if (int(r.get("total_volumes", r.get("work_count", 0)) or 0) >= min_total_volumes)
-                ]
-            logger.info(f"Found {len(magazine_period_related)} magazine period related works")
-
-            for idx, related in enumerate(magazine_period_related):
-                logger.info(
-                    f"Magazine related work {idx}: {related['title']} (overlap: {related.get('overlap_years', 0)} years)"
-                )
-
-            # 同時期雑誌の優先表示用に収集（include_related 節内）
-            period_magazine_ids: set = set()
-            related_work_ids: set = set()
-
-            for related in magazine_period_related:
-                if related["work_id"] not in node_ids_seen:
-                    related_node = {
-                        "id": related["work_id"],
-                        "label": related["title"],
-                        "type": "work",
-                        "properties": {**related, "source": "neo4j"},
-                        "relevance_score": related.get("relevance_score", 1000),
-                    }
-                    nodes.append(related_node)
-                    node_ids_seen.add(related["work_id"])
-                # 収集
-                related_work_ids.add(related["work_id"])
-
-                # Add creators - collect all creators for this work first
-                all_creators_for_related_work = []
-                for creator in related["creators"]:
-                    if creator:
-                        # Split multiple creators and normalize each one
-                        normalized_creators = normalize_and_split_creators(creator)
-                        all_creators_for_related_work.extend(normalized_creators)
-
-                # Create individual author nodes for each creator
-                for normalized_creator in all_creators_for_related_work:
-                    if normalized_creator:
-                        author_id = generate_normalized_id(normalized_creator, "author")
-                        if author_id not in node_ids_seen:
-                            author_node = {
-                                "id": author_id,
-                                "label": normalized_creator,
-                                "type": "author",
-                                "properties": {"source": "neo4j", "name": normalized_creator},
-                            }
-                            nodes.append(author_node)
-                            node_ids_seen.add(author_id)
-
-                        edge_id = f"{author_id}-created-{related['work_id']}"
-                        if edge_id not in edge_ids_seen:
-                            edge = {
-                                "id": edge_id,
-                                "source": author_id,
-                                "target": related["work_id"],
+                    )
+                    node_ids_seen.add(r["work_id"])
+                norm_author = normalize_creator_name(r.get("author_name", ""))
+                aid = generate_normalized_id(norm_author, "author")
+                if aid in node_ids_seen:
+                    eid = f"{aid}-created-{r['work_id']}"
+                    if eid not in edge_ids_seen:
+                        edges.append(
+                            {
+                                "id": eid,
+                                "source": aid,
+                                "target": r["work_id"],
                                 "type": "created",
                                 "properties": {"source": "neo4j"},
                             }
-                            edges.append(edge)
-                            edge_ids_seen.add(edge_id)
+                        )
+                        edge_ids_seen.add(eid)
 
-                # Add magazines
-                if related.get("magazine_name"):
-                    magazine_id = generate_normalized_id(related["magazine_name"], "magazine")
-                    if magazine_id not in node_ids_seen:
-                        magazine_node = {
-                            "id": magazine_id,
-                            "label": related["magazine_name"],
-                            "type": "magazine",
-                            "properties": {"source": "neo4j", "name": related["magazine_name"]},
-                        }
-                        nodes.append(magazine_node)
-                        node_ids_seen.add(magazine_id)
-                    # 同時期雑誌としてマーク
-                    period_magazine_ids.add(magazine_id)
-
-                    edge_id = f"{magazine_id}-published-{related['work_id']}"
-                    if edge_id not in edge_ids_seen:
-                        edge = {
-                            "id": edge_id,
-                            "source": magazine_id,
-                            "target": related["work_id"],
-                            "type": "published",
-                            "properties": {
-                                "source": "neo4j",
-                                "is_period_overlap": True,
-                                "overlap_years": related.get("overlap_years"),
-                                "overlap_ratio": related.get("overlap_ratio"),
-                                "jaccard_similarity": related.get("jaccard_similarity"),
-                                "description": "同時期の掲載誌",
-                            },
-                        }
-                        edges.append(edge)
-                        edge_ids_seen.add(edge_id)
-
-                    # Add publisher for this magazine if available
-                    if related.get("publisher_name"):
-                        normalized_publisher = normalize_publisher_name(related["publisher_name"])
-                        if normalized_publisher:
-                            publisher_id = generate_normalized_id(normalized_publisher, "publisher")
-                            if publisher_id not in node_ids_seen:
-                                publisher_node = {
-                                    "id": publisher_id,
-                                    "label": normalized_publisher,
-                                    "type": "publisher",
-                                    "properties": {"source": "neo4j", "name": normalized_publisher},
-                                }
-                                nodes.append(publisher_node)
-                                node_ids_seen.add(publisher_id)
-
-                            # Create magazine -> publisher edge
-                            mag_pub_edge_id = f"{magazine_id}-published_by-{publisher_id}"
-                            if mag_pub_edge_id not in edge_ids_seen:
-                                mag_pub_edge = {
-                                    "id": mag_pub_edge_id,
-                                    "source": magazine_id,
-                                    "target": publisher_id,
-                                    "type": "published_by",
-                                    "properties": {"source": "neo4j"},
-                                }
-                                edges.append(mag_pub_edge)
-                                edge_ids_seen.add(mag_pub_edge_id)
-
-            # Note: publisher nodes are now only created through magazine relationships
-            # Direct work -> publisher edges are removed as requested
-            # 作品間の直接エッジは作成しない（雑誌・出版社経由で表現）
-
-            # Add works from same publication period (without magazine constraint)
-            period_related = self.get_related_works_by_publication_period(main_work_id, 3, 5)
+            period_related = self.get_related_works_by_magazine_and_period(main_work_id, 2, 50)
             if min_total_volumes is not None:
-                period_related = [
-                    r
-                    for r in period_related
-                    if (int(r.get("total_volumes", r.get("work_count", 0)) or 0) >= min_total_volumes)
-                ]
-            for related in period_related:
-                if related["work_id"] not in node_ids_seen:
-                    related_node = {
-                        "id": related["work_id"],
-                        "label": related["title"],
-                        "type": "work",
-                        "properties": {**related, "source": "neo4j"},
-                        "relevance_score": related.get("relevance_score", 100),
-                    }
-                    nodes.append(related_node)
-                    node_ids_seen.add(related["work_id"])
+                period_related = [r for r in period_related if int(r.get("total_volumes") or 0) >= min_total_volumes]
 
-                    # Add creators of period-related works - collect all creators first
-                    all_creators_for_period_work = []
-                    for creator in related["creators"]:
-                        if creator:
-                            # Split multiple creators and normalize each one
-                            normalized_creators = normalize_and_split_creators(creator)
-                            all_creators_for_period_work.extend(normalized_creators)
+            period_magazine_ids: set = set()
+            related_work_ids: set = set()
+            for r in period_related:
+                if r["work_id"] not in node_ids_seen:
+                    nodes.append(
+                        {
+                            "id": r["work_id"],
+                            "label": r["title"],
+                            "type": "work",
+                            "properties": {**r, "source": "neo4j"},
+                            "relevance_score": r.get("relevance_score", 1000),
+                        }
+                    )
+                    node_ids_seen.add(r["work_id"])
+                related_work_ids.add(r["work_id"])
+                # authors
+                all_creators: List[str] = []
+                for c in r.get("creators", []) or []:
+                    if c:
+                        all_creators.extend(normalize_and_split_creators(c))
+                for creator in all_creators:
+                    if not creator:
+                        continue
+                    aid = generate_normalized_id(creator, "author")
+                    if aid not in node_ids_seen:
+                        nodes.append(
+                            {
+                                "id": aid,
+                                "label": creator,
+                                "type": "author",
+                                "properties": {"source": "neo4j", "name": creator},
+                            }
+                        )
+                        node_ids_seen.add(aid)
+                    eid = f"{aid}-created-{r['work_id']}"
+                    if eid not in edge_ids_seen:
+                        edges.append(
+                            {
+                                "id": eid,
+                                "source": aid,
+                                "target": r["work_id"],
+                                "type": "created",
+                                "properties": {"source": "neo4j"},
+                            }
+                        )
+                        edge_ids_seen.add(eid)
+                # magazine
+                if r.get("magazine_name"):
+                    mid = generate_normalized_id(r["magazine_name"], "magazine")
+                    if mid not in node_ids_seen:
+                        nodes.append(
+                            {
+                                "id": mid,
+                                "label": r["magazine_name"],
+                                "type": "magazine",
+                                "properties": {"source": "neo4j", "name": r["magazine_name"]},
+                            }
+                        )
+                        node_ids_seen.add(mid)
+                    period_magazine_ids.add(mid)
+                    eid = f"{mid}-published-{r['work_id']}"
+                    if eid not in edge_ids_seen:
+                        edges.append(
+                            {
+                                "id": eid,
+                                "source": mid,
+                                "target": r["work_id"],
+                                "type": "published",
+                                "properties": {
+                                    "source": "neo4j",
+                                    "is_period_overlap": True,
+                                    "description": "同時期の掲載誌",
+                                },
+                            }
+                        )
+                        edge_ids_seen.add(eid)
 
-                    # Create individual author nodes for each creator
-                    for normalized_creator in all_creators_for_period_work:
-                        if normalized_creator:
-                            author_id = generate_normalized_id(normalized_creator, "author")
-                            if author_id not in node_ids_seen:
-                                author_node = {
-                                    "id": author_id,
-                                    "label": normalized_creator,
+        # same publisher other magazines
+        if include_same_publisher_other_magazines and main_works:
+            main_publishers = set()
+            main_magazines = set()
+            for w in main_works:
+                main_publishers.update([normalize_publisher_name(p) for p in w.get("publishers", []) if p])
+                main_magazines.update([m for m in w.get("magazines", []) if m])
+
+            query = """
+            UNWIND $publisher_names AS pubName
+            MATCH (p:Publisher)
+            WHERE toLower(p.name) = toLower(pubName)
+            MATCH (m:Magazine)-[:PUBLISHED_BY]->(p)
+            WHERE NOT toLower(m.title) IN [x IN $main_magazines | toLower(x)]
+            MATCH (w:Work)-[:PUBLISHED_IN]->(m)
+            OPTIONAL MATCH (w)-[:CREATED_BY]->(a:Author)
+            RETURN w.id AS work_id, w.title AS title,
+                   w.first_published AS first_published, w.last_published AS last_published,
+                   w.total_volumes AS total_volumes,
+                   collect(DISTINCT a.name) AS creators,
+                   m.title AS magazine_name,
+                   p.name AS publisher_name
+            LIMIT $limit
+            """
+            result = self._run(
+                query,
+                publisher_names=list(main_publishers),
+                main_magazines=list(main_magazines),
+                limit=same_publisher_other_magazines_limit or 5,
+            )
+            same_pub_others = [dict(r) for r in result]
+            for r in same_pub_others:
+                if min_total_volumes is not None and int(r.get("total_volumes") or 0) < min_total_volumes:
+                    continue
+                if r["work_id"] not in node_ids_seen:
+                    nodes.append(
+                        {
+                            "id": r["work_id"],
+                            "label": r["title"],
+                            "type": "work",
+                            "properties": {**r, "source": "neo4j", "relation": "same_publisher_other_magazine"},
+                            "relevance_score": 750,
+                        }
+                    )
+                    node_ids_seen.add(r["work_id"])
+                for c in r.get("creators", []) or []:
+                    for creator in normalize_and_split_creators(c):
+                        if not creator:
+                            continue
+                        aid = generate_normalized_id(creator, "author")
+                        if aid not in node_ids_seen:
+                            nodes.append(
+                                {
+                                    "id": aid,
+                                    "label": creator,
                                     "type": "author",
-                                    "properties": {"source": "neo4j", "name": normalized_creator},
+                                    "properties": {"source": "neo4j", "name": creator},
                                 }
-                                nodes.append(author_node)
-                                node_ids_seen.add(author_id)
-
-                            edge_id = f"{author_id}-created-{related['work_id']}"
-                            if edge_id not in edge_ids_seen:
-                                edge = {
-                                    "id": edge_id,
-                                    "source": author_id,
-                                    "target": related["work_id"],
+                            )
+                            node_ids_seen.add(aid)
+                        eid = f"{aid}-created-{r['work_id']}"
+                        if eid not in edge_ids_seen:
+                            edges.append(
+                                {
+                                    "id": eid,
+                                    "source": aid,
+                                    "target": r["work_id"],
                                     "type": "created",
                                     "properties": {"source": "neo4j"},
                                 }
-                                edges.append(edge)
-                                edge_ids_seen.add(edge_id)
+                            )
+                            edge_ids_seen.add(eid)
+                if r.get("magazine_name"):
+                    mid = generate_normalized_id(r["magazine_name"], "magazine")
+                    if mid not in node_ids_seen:
+                        nodes.append(
+                            {
+                                "id": mid,
+                                "label": r["magazine_name"],
+                                "type": "magazine",
+                                "properties": {
+                                    "source": "neo4j",
+                                    "name": r["magazine_name"],
+                                    "is_same_publisher_other_magazine": True,
+                                },
+                            }
+                        )
+                        node_ids_seen.add(mid)
+                    eid = f"{mid}-published-{r['work_id']}"
+                    if eid not in edge_ids_seen:
+                        edges.append(
+                            {
+                                "id": eid,
+                                "source": mid,
+                                "target": r["work_id"],
+                                "type": "published",
+                                "properties": {"source": "neo4j", "description": "同一出版社の別雑誌"},
+                            }
+                        )
+                        edge_ids_seen.add(eid)
 
-            # --- Related works 並び替え (メイン作品を先頭に保持) ---
-            if sort_total_volumes in ("asc", "desc"):
+        # Add Publisher nodes and Magazine->Publisher edges based on actual DB relationships for included works
+        try:
+            work_ids_for_mapping = [n["id"] for n in nodes if n.get("type") == "work"]
+            if work_ids_for_mapping:
+                map_query = (
+                    "UNWIND $work_ids AS wid\n"
+                    "MATCH (w:Work {id: wid})-[:PUBLISHED_IN]->(m:Magazine)-[:PUBLISHED_BY]->(p:Publisher)\n"
+                    "RETURN w.id AS work_id, m.title AS magazine_name, p.name AS publisher_name"
+                )
+                mp_result = self._run(map_query, work_ids=work_ids_for_mapping)
+                for rec in mp_result:
+                    mname = rec.get("magazine_name")
+                    pname = rec.get("publisher_name")
+                    if not mname or not pname:
+                        continue
+                    # Normalize and generate ids
+                    npub = normalize_publisher_name(pname)
+                    if not npub:
+                        continue
+                    mid = generate_normalized_id(mname, "magazine")
+                    pid = generate_normalized_id(npub, "publisher")
 
-                def _extract_total_from_node(n: Dict[str, Any]) -> int:
-                    props = n.get("properties", n.get("data", {})) or {}
-                    tv = props.get("total_volumes") or props.get("work_count") or 0
-                    try:
-                        return int(tv)
-                    except Exception:
-                        import re
+                    # Ensure Magazine node exists
+                    if mid not in node_ids_seen:
+                        nodes.append(
+                            {
+                                "id": mid,
+                                "label": mname,
+                                "type": "magazine",
+                                "properties": {"source": "neo4j", "name": mname},
+                            }
+                        )
+                        node_ids_seen.add(mid)
 
-                        m = re.search(r"(\d+)", str(tv))
-                        return int(m.group(1)) if m else 0
+                    # Ensure Publisher node exists
+                    if pid not in node_ids_seen:
+                        nodes.append(
+                            {
+                                "id": pid,
+                                "label": npub,
+                                "type": "publisher",
+                                "properties": {"source": "neo4j", "name": npub},
+                            }
+                        )
+                        node_ids_seen.add(pid)
 
-                # 順番保持: 既存 nodes からメイン -> related 分離
-                main_nodes_in_order = [n for n in nodes if n.get("id") in main_work_ids]
-                related_nodes = [n for n in nodes if n.get("id") not in main_work_ids]
+                    # Add magazine -> publisher edge
+                    eid = f"{mid}-published_by-{pid}"
+                    if eid not in edge_ids_seen:
+                        edges.append(
+                            {
+                                "id": eid,
+                                "source": mid,
+                                "target": pid,
+                                "type": "published_by",
+                                "properties": {"source": "neo4j"},
+                            }
+                        )
+                        edge_ids_seen.add(eid)
+        except Exception as e:
+            logger.error("Failed to add magazine->publisher mappings: %s", e)
 
-                reverse = sort_total_volumes == "desc"
-                related_nodes.sort(key=_extract_total_from_node, reverse=reverse)
-
-                nodes = main_nodes_in_order + related_nodes
-
-        # Final deduplication to ensure no duplicate nodes exist
-        unique_nodes = []
-        seen_work_titles = {}  # For work nodes, track by title to avoid duplicates
-        unique_node_ids = set()  # Track by ID
-
-        for node in nodes:
-            if node["type"] == "work":
-                # For work nodes, prioritize by keeping the one with more complete data.
-                # Additionally, prefer nodes with a larger (or defined) total_volumes.
-                title = node["label"]
+        # Deduplicate nodes by work title preference and edges by key
+        unique_nodes: List[Dict[str, Any]] = []
+        seen_work_titles: Dict[str, Dict[str, Any]] = {}
+        unique_node_ids = set()
+        for n in nodes:
+            if n["type"] == "work":
+                title = n["label"]
                 if title in seen_work_titles:
-                    existing_node = seen_work_titles[title]
-                    existing_data_count = len(existing_node.get("data", {}))
-                    current_data_count = len(node.get("data", {}))
-                    existing_score = existing_node.get("relevance_score", 0)
-                    current_score = node.get("relevance_score", 0)
-
-                    def _extract_total_volumes(n):
-                        # Prefer properties then data
-                        for container_key in ("properties", "data"):
-                            container = n.get(container_key, {})
-                            tv = container.get("total_volumes")
-                            if tv not in (None, ""):
-                                try:
-                                    return int(tv)
-                                except (ValueError, TypeError):
-                                    return tv
-                        return None
-
-                    existing_tv = _extract_total_volumes(existing_node)
-                    current_tv = _extract_total_volumes(node)
-
-                    replace = False
+                    existing = seen_work_titles[title]
+                    existing_score = existing.get("relevance_score", 0)
+                    current_score = n.get("relevance_score", 0)
                     if current_score > existing_score:
-                        replace = True
-                    elif current_score == existing_score:
-                        # If both have total_volumes numeric, keep larger
-                        if isinstance(existing_tv, int) or isinstance(current_tv, int):
-                            existing_val = existing_tv if isinstance(existing_tv, int) else 0
-                            current_val = current_tv if isinstance(current_tv, int) else 0
-                            if current_val > existing_val:
-                                replace = True
-                            elif current_val == existing_val and current_data_count > existing_data_count:
-                                replace = True
-                        elif current_data_count > existing_data_count:
-                            replace = True
-
-                    if replace:
-                        unique_nodes = [n for n in unique_nodes if n["label"] != title or n["type"] != "work"]
-                        unique_nodes.append(node)
-                        seen_work_titles[title] = node
-                        unique_node_ids.add(node["id"])
-                    # else keep existing
+                        unique_nodes = [x for x in unique_nodes if not (x["type"] == "work" and x["label"] == title)]
+                        unique_nodes.append(n)
+                        seen_work_titles[title] = n
+                        unique_node_ids.add(n["id"])
                 else:
-                    seen_work_titles[title] = node
-                    unique_nodes.append(node)
-                    unique_node_ids.add(node["id"])
+                    seen_work_titles[title] = n
+                    unique_nodes.append(n)
+                    unique_node_ids.add(n["id"])
             else:
-                # For non-work nodes, use ID-based deduplication
-                if node["id"] not in unique_node_ids:
-                    unique_nodes.append(node)
-                    unique_node_ids.add(node["id"])
+                if n["id"] not in unique_node_ids:
+                    unique_nodes.append(n)
+                    unique_node_ids.add(n["id"])
 
-        # Final deduplication for edges, ensuring they reference existing nodes
-        valid_node_ids = {node["id"] for node in unique_nodes}
+        valid_node_ids = {n["id"] for n in unique_nodes}
+        unique_edges: List[Dict[str, Any]] = []
+        edge_keys = set()
+        for e in edges:
+            s = e.get("source", e.get("from"))
+            t = e.get("target", e.get("to"))
+            if s in valid_node_ids and t in valid_node_ids:
+                key = (s, t, e["type"])
+                if key not in edge_keys:
+                    unique_edges.append({**e, "source": s, "target": t})
+                    edge_keys.add(key)
 
-        unique_edges = []
-        unique_edge_keys = set()
+        # Order work nodes by total_volumes if requested
+        work_nodes = [n for n in unique_nodes if n["type"] == "work"]
+        other_nodes = [n for n in unique_nodes if n["type"] != "work"]
 
-        for edge in edges:
-            from_id = edge.get("source", edge.get("from"))
-            to_id = edge.get("target", edge.get("to"))
-
-            # If this edge references a work node that was deduplicated, update the reference
-            # Check if the from/to IDs exist in our final node list
-            if from_id not in valid_node_ids:
-                # Try to find the correct node ID by matching with work titles
-                found_replacement = False
-                for node in unique_nodes:
-                    if node["type"] == "work" and node["id"] != from_id:
-                        # Check if this might be the same work by looking at original edges
-                        original_from_node = next((n for n in nodes if n["id"] == from_id), None)
-                        if original_from_node and original_from_node["label"] == node["label"]:
-                            from_id = node["id"]
-                            found_replacement = True
-                            break
-                if not found_replacement:
-                    continue  # Skip this edge if we can't find a valid from node
-
-            if to_id not in valid_node_ids:
-                # Try to find the correct node ID by matching with work titles
-                found_replacement = False
-                for node in unique_nodes:
-                    if node["type"] == "work" and node["id"] != to_id:
-                        # Check if this might be the same work by looking at original edges
-                        original_to_node = next((n for n in nodes if n["id"] == to_id), None)
-                        if original_to_node and original_to_node["label"] == node["label"]:
-                            to_id = node["id"]
-                            found_replacement = True
-                            break
-                if not found_replacement:
-                    continue  # Skip this edge if we can't find a valid to node
-
-            # Only add edge if both nodes exist
-            if from_id in valid_node_ids and to_id in valid_node_ids:
-                edge_key = (from_id, to_id, edge["type"])
-                if edge_key not in unique_edge_keys:
-                    updated_edge = edge.copy()
-                    updated_edge["source"] = from_id
-                    updated_edge["target"] = to_id
-                    # Remove old format keys if they exist
-                    updated_edge.pop("from", None)
-                    updated_edge.pop("to", None)
-                    unique_edges.append(updated_edge)
-                    unique_edge_keys.add(edge_key)
-
-    # Sort nodes by relevance_score (work nodes only, excluding the main search results)
-        work_nodes = []
-        other_nodes = []
-        main_work_nodes = []
-
-        for node in unique_nodes:
-            if node["type"] == "work":
-                # Check if this is one of the main search results
-                is_main_result = any(node["id"] == work["work_id"] for work in main_works)
-                if is_main_result:
-                    main_work_nodes.append(node)
-                else:
-                    work_nodes.append(node)
-            else:
-                other_nodes.append(node)
-
-        # Related works ordering: total_volumes if requested else relevance_score
         def _extract_total_for_node(n: Dict[str, Any]) -> int:
             props = n.get("properties", n.get("data", {})) or {}
             tv = props.get("total_volumes") or props.get("work_count") or 0
@@ -1334,89 +735,51 @@ class Neo4jMangaRepository:
                 return int(m.group(1)) if m else 0
 
         if sort_total_volumes in ("asc", "desc"):
-            reverse_tv = sort_total_volumes == "desc"
-            work_nodes.sort(key=_extract_total_for_node, reverse=reverse_tv)
+            work_nodes.sort(key=_extract_total_for_node, reverse=sort_total_volumes == "desc")
         else:
-            # fallback relevance ordering
             work_nodes.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+        unique_nodes = work_nodes + other_nodes
 
-        # 同時期雑誌を最優先で表示するため、other_nodes を並び替える
-        # period_magazine_ids は include_related ブロック内で収集済みでない可能性があるため存在チェック
-        try:
-            period_magazine_ids
-        except NameError:
-            period_magazine_ids = set()
+        # Apply limit to work nodes only, and keep all neighbor nodes connected to those works
+        if limit and isinstance(limit, int):
+            top_works = work_nodes[:limit]
+            kept_ids = {n["id"] for n in top_works}
 
-        period_magazines = [n for n in other_nodes if n.get("type") == "magazine" and n.get("id") in period_magazine_ids]
-        remaining_others = [n for n in other_nodes if n not in period_magazines]
+            # Include neighbor nodes that are connected to the kept works via edges
+            for e in unique_edges:
+                s = e.get("source", e.get("from"))
+                t = e.get("target", e.get("to"))
+                if s in kept_ids or t in kept_ids:
+                    kept_ids.add(s)
+                    kept_ids.add(t)
 
-        # period 雑誌に紐づく出版社を次点で優先
-        period_publisher_ids = set()
-        for e in edges:
-            if e.get("type") == "published_by" and e.get("source") in period_magazine_ids:
-                period_publisher_ids.add(e.get("target"))
+            # Filter nodes and edges to those within the kept id set
+            unique_nodes = [n for n in unique_nodes if n["id"] in kept_ids]
+            unique_edges = [
+                e
+                for e in unique_edges
+                if (e.get("source", e.get("from")) in kept_ids and e.get("target", e.get("to")) in kept_ids)
+            ]
 
-        period_publishers = [n for n in remaining_others if n.get("type") == "publisher" and n.get("id") in period_publisher_ids]
-        remaining_others = [n for n in remaining_others if n not in period_publishers]
-
-        # 最終的なノード順: メイン作品 -> 同時期雑誌 -> ソート済み関連作品 -> 同時期雑誌の出版社 -> その他
-        unique_nodes = main_work_nodes + period_magazines + work_nodes + period_publishers + remaining_others
-
-        # 既存の published エッジのうち、メイン作品や関連作品と period 雑誌を結ぶものにフラグを付与
-        if period_magazine_ids:
-            # 対象となる作品ID（メイン + 関連）
-            target_work_ids = {w["work_id"] for w in main_works}
-            # related_work_ids は include_related 節で収集（未定義の場合は空集合）
-            try:
-                target_work_ids.update(related_work_ids)
-            except NameError:
-                pass
-            for e in edges:
-                if e.get("type") == "published" and e.get("source") in period_magazine_ids and e.get("target") in target_work_ids:
-                    props = e.setdefault("properties", {})
-                    props.setdefault("source", "neo4j")
-                    props["is_period_overlap"] = True
-                    props.setdefault("description", "同時期の掲載誌")
-
-        # Enforce overall node limit including related nodes
-        if limit is not None and isinstance(limit, int) and limit > 0 and len(unique_nodes) > limit:
-            kept_nodes = unique_nodes[:limit]
-            kept_ids = {n["id"] for n in kept_nodes}
-            # Filter edges to only those connecting kept nodes
-            unique_edges = [e for e in unique_edges if e.get("source") in kept_ids and e.get("target") in kept_ids]
-            unique_nodes = kept_nodes
-
-        logger.info(
-            f"After deduplication (limited): {len(unique_nodes)} nodes and {len(unique_edges)} edges for search term: '{search_term}'"
-        )
         return {"nodes": unique_nodes, "edges": unique_edges}
 
+    # ---------------------- Admin utilities ----------------------
     def get_database_statistics(self) -> Dict[str, int]:
-        """Get database statistics"""
         try:
+            stats: Dict[str, int] = {}
             with self.driver.session() as session:
-                stats = {}
-
-                # Count nodes
                 for label in ["Work", "Author", "Publisher", "Magazine"]:
-                    result = session.run(f"MATCH (n:{label}) RETURN count(n) as count")
-                    stats[f"{label.lower()}_count"] = result.single()["count"]
-
-                # Count relationships
-                for rel_type in ["CREATED_BY", "PUBLISHED_IN", "PUBLISHED_BY"]:
-                    result = session.run(f"MATCH ()-[r:{rel_type}]->() RETURN count(r) as count")
-                    stats[f"{rel_type.lower()}_relationships"] = result.single()["count"]
-
-                logger.info(f"Database statistics: {stats}")
-                return stats
+                    r = session.run(f"MATCH (n:{label}) RETURN count(n) AS c")
+                    stats[f"{label.lower()}_count"] = r.single()["c"]
+                for rel in ["CREATED_BY", "PUBLISHED_IN", "PUBLISHED_BY"]:
+                    r = session.run(f"MATCH ()-[r:{rel}]->() RETURN count(r) AS c")
+                    stats[f"{rel.lower()}_relationships"] = r.single()["c"]
+            return stats
         except Exception as e:
-            logger.error(f"Error getting database statistics: {e}")
+            logger.error("Error getting database statistics: %s", e)
             return {}
 
     def get_work_by_id(self, work_id: str) -> Optional[Dict[str, Any]]:
-        """Get work details by ID"""
-        logger.info(f"Getting work by ID: {work_id}")
-
         with self.driver.session() as session:
             query = """
             MATCH (w:Work {id: $work_id})
@@ -1426,59 +789,276 @@ class Neo4jMangaRepository:
                    collect(DISTINCT a.name) as authors,
                    collect(DISTINCT p.name) as publishers
             """
-
-            result = session.run(query, work_id=work_id)
-            record = result.single()
-
-            if record:
-                work = record["w"]
-                return {
-                    "id": work["id"],
-                    "title": work.get("title", ""),
-                    "isbn": work.get("isbn", ""),
-                    "genre": work.get("genre", ""),
-                    "published_date": work.get("published_date", ""),
-                    "cover_image_url": work.get("cover_image_url", ""),
-                    "publisher": record["publishers"][0] if record["publishers"] else "",
-                    "authors": record["authors"],
-                }
-
-            return None
+            rec = session.run(query, work_id=work_id).single()
+            if not rec:
+                return None
+            w = rec["w"]
+            return {
+                "id": w["id"],
+                "title": w.get("title", ""),
+                "isbn": w.get("isbn", ""),
+                "genre": w.get("genre", ""),
+                "published_date": w.get("published_date", ""),
+                "cover_image_url": w.get("cover_image_url", ""),
+                "publisher": (rec["publishers"] or [""])[0],
+                "authors": rec["authors"] or [],
+            }
 
     def update_work_cover_image(self, work_id: str, cover_url: str) -> bool:
-        """Update work cover image URL"""
-        logger.info(f"Updating cover image for work {work_id}: {cover_url}")
-
         with self.driver.session() as session:
-            query = """
-            MATCH (w:Work {id: $work_id})
-            SET w.cover_image_url = $cover_url
-            RETURN w.id as updated_id
-            """
-
-            result = session.run(query, work_id=work_id, cover_url=cover_url)
-            record = result.single()
-
-            return record is not None
+            r = session.run(
+                """
+                MATCH (w:Work {id: $work_id})
+                SET w.cover_image_url = $cover_url
+                RETURN w.id AS updated_id
+                """,
+                work_id=work_id,
+                cover_url=cover_url,
+            ).single()
+            return r is not None
 
     def get_works_needing_covers(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get works that have ISBN but no cover image"""
-        logger.info(f"Getting works needing covers, limit: {limit}")
-
         with self.driver.session() as session:
-            query = """
-            MATCH (w:Work)
-            WHERE w.isbn IS NOT NULL
-              AND w.isbn <> ''
-              AND (w.cover_image_url IS NULL OR w.cover_image_url = '')
-            RETURN w.id as id, w.title as title, w.isbn as isbn
-            LIMIT $limit
+            r = session.run(
+                """
+                MATCH (w:Work)
+                WHERE w.isbn IS NOT NULL AND w.isbn <> '' AND (w.cover_image_url IS NULL OR w.cover_image_url = '')
+                RETURN w.id as id, w.title as title, w.isbn as isbn
+                LIMIT $limit
+                """,
+                limit=limit,
+            )
+            return [{"id": rec["id"], "title": rec["title"], "isbn": rec["isbn"]} for rec in r]
+
+    # ---------------------- Vector search utilities ----------------------
+    def create_vector_index(
+        self,
+        label: str,
+        property_name: str = "embedding",
+        dimension: int = 1536,
+        similarity: str = "cosine",
+    ) -> None:
+        """Create a vector index if it doesn't exist."""
+        index_name = f"idx_{label.lower()}_{property_name}_vector"
+        session = self.driver.session()
+        try:
+            check_query = """
+                CALL db.indexes() YIELD name
+                WITH name WHERE name = $indexName
+                RETURN count(*) AS count
+                """
+            rec = session.run(check_query, indexName=index_name).single()
+            exists = (rec or {}).get("count", 0) > 0
+            if exists:
+                logger.info("Vector index already exists: %s", index_name)
+                return
+
+            create_query = (
+                "CALL db.index.vector.createNodeIndex($indexName, $label, $property_name, $dimension, "
+                "{similarityFunction: $similarity})"
+            )
+            session.run(
+                create_query,
+                indexName=index_name,
+                label=label,
+                property_name=property_name,
+                dimension=int(dimension),
+                similarity=similarity,
+            )
+            logger.info("Created vector index: %s", index_name)
+        except Exception as e:
+            logger.error("Failed to create vector index: %s", e)
+
+    def search_by_vector(
+        self,
+        embedding: List[float],
+        label: str = "Work",
+        property_name: str = "embedding",
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Search nodes by vector similarity without using vector indexes.
+
+        This implementation performs a label scan and computes cosine similarity
+        in Cypher using array reductions. It avoids any index/procedure so it
+        works on Neo4j plans where vector index is unavailable.
+        """
+        session = self.driver.session()
+        try:
+            # Compute cosine similarity in pure Cypher
+            # Note: We limit first by top-N after computing scores to keep runtime reasonable.
+            query = f"""
+          MATCH (node:{label})
+          WHERE node.{property_name} IS NOT NULL AND size(node.{property_name}) > 0
+          WITH node, node.{property_name} AS v1, $embedding AS v2,
+              CASE WHEN size(node.{property_name}) < size($embedding)
+                  THEN size(node.{property_name}) ELSE size($embedding) END AS n
+          WITH node, v1, v2, n,
+              reduce(dot = 0.0, i IN range(0, n-1) | dot + coalesce(v1[i], 0.0) * coalesce(v2[i], 0.0)) AS dot,
+              sqrt(reduce(s1 = 0.0, i IN range(0, n-1) | s1 + coalesce(v1[i], 0.0)^2)) AS norm1,
+              sqrt(reduce(s2 = 0.0, i IN range(0, n-1) | s2 + coalesce(v2[i], 0.0)^2)) AS norm2
+          WITH node, CASE WHEN norm1 = 0 OR norm2 = 0 THEN 0.0 ELSE dot / (norm1 * norm2) END AS score
+          ORDER BY score DESC
+          LIMIT $limit
+          OPTIONAL MATCH (node)-[:CREATED_BY]->(a:Author)
+          OPTIONAL MATCH (node)-[:PUBLISHED_IN]->(m:Magazine)-[:PUBLISHED_BY]->(p:Publisher)
+          RETURN node.id AS work_id,
+                node.title AS title,
+                node.published_date AS published_date,
+                node.first_published AS first_published,
+                node.last_published AS last_published,
+                collect(DISTINCT a.name) AS creators,
+                collect(DISTINCT m.title) AS magazines,
+                collect(DISTINCT p.name) AS publishers,
+                node.genre AS genre,
+                node.isbn AS isbn,
+                node.volume AS volume,
+                node.series_id AS series_id,
+                node.series_name AS series_name,
+                score AS score
             """
-
-            result = session.run(query, limit=limit)
-
-            works = []
+            result = session.run(query, embedding=embedding, limit=int(limit))
+            out: List[Dict[str, Any]] = []
             for record in result:
-                works.append({"id": record["id"], "title": record["title"], "isbn": record["isbn"]})
+                d = dict(record)
+                d["similarity_score"] = d.pop("score", None)
+                out.append(d)
+            return out
+        except Exception as e:
+            logger.error("Vector search (scan) failed: %s", e)
+            return []
 
-            return works
+    def add_embedding_to_work(self, work_id: str, embedding: List[float]) -> bool:
+        """Attach an embedding vector to a Work node."""
+        session = self.driver.session()
+        try:
+            r = session.run(
+                """
+                    MATCH (w:Work {id: $work_id})
+                    SET w.embedding = $embedding
+                    RETURN w.id AS work_id
+                    """,
+                work_id=work_id,
+                embedding=embedding,
+            ).single()
+            return r is not None
+        except Exception as e:
+            logger.error("Failed to add embedding to work %s: %s", work_id, e)
+            return False
+
+    def search_manga_works_with_vector(
+        self,
+        search_term: Optional[str] = None,
+        embedding: Optional[List[float]] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Hybrid search combining text and vector results."""
+        results: List[Dict[str, Any]] = []
+
+        if search_term and embedding:
+            half = max(1, int(limit) // 2)
+            text_results = self.search_manga_works(search_term, half)
+            vector_results = self.search_by_vector(embedding, limit=half)
+
+            vec_by_id = {v.get("work_id"): v for v in vector_results}
+
+            for t in text_results:
+                rid = t.get("work_id")
+                item = {**t}
+                if rid in vec_by_id:
+                    base = vec_by_id[rid].get("similarity_score") or 0.0
+                    item["search_score"] = float(base) + 0.1
+                else:
+                    item["search_score"] = 0.6
+                results.append(item)
+
+            existing_ids = {r.get("work_id") for r in results}
+            for v in vector_results:
+                if v.get("work_id") not in existing_ids:
+                    v = {**v}
+                    v["search_score"] = v.get("similarity_score")
+                    results.append(v)
+
+            return results[:limit]
+
+        if embedding and not search_term:
+            vector_results = self.search_by_vector(embedding, limit=limit)
+            for v in vector_results:
+                v["search_score"] = v.get("similarity_score")
+            return vector_results
+
+        if search_term and not embedding:
+            return self.search_manga_works(search_term, limit)
+
+        return []
+
+    def search_work_synopsis_by_vector(self, embedding: List[float], limit: int = 10) -> List[Dict[str, Any]]:
+        """Vector search over Work.synopsis_embedding without using vector indexes."""
+        session = self.driver.session()
+        try:
+            query = """
+          MATCH (node:Work)
+          WHERE node.synopsis_embedding IS NOT NULL AND size(node.synopsis_embedding) > 0
+          WITH node, node.synopsis_embedding AS v1, $embedding AS v2,
+              CASE WHEN size(node.synopsis_embedding) < size($embedding)
+                  THEN size(node.synopsis_embedding) ELSE size($embedding) END AS n
+          WITH node, v1, v2, n,
+              reduce(dot = 0.0, i IN range(0, n-1) | dot + coalesce(v1[i], 0.0) * coalesce(v2[i], 0.0)) AS dot,
+              sqrt(reduce(s1 = 0.0, i IN range(0, n-1) | s1 + coalesce(v1[i], 0.0)^2)) AS norm1,
+              sqrt(reduce(s2 = 0.0, i IN range(0, n-1) | s2 + coalesce(v2[i], 0.0)^2)) AS norm2
+          WITH node, CASE WHEN norm1 = 0 OR norm2 = 0 THEN 0.0 ELSE dot / (norm1 * norm2) END AS score
+          ORDER BY score DESC
+          LIMIT $limit
+          RETURN node.id AS work_id,
+                node.title AS title,
+                node.synopsis AS synopsis,
+                score AS score
+            """
+            result = session.run(query, embedding=embedding, limit=int(limit))
+            out: List[Dict[str, Any]] = []
+            for record in result:
+                d = dict(record)
+                d["similarity_score"] = d.pop("score", None)
+                out.append(d)
+            return out
+        except Exception as e:
+            logger.error("Synopsis vector search (scan) failed: %s", e)
+            return []
+
+    def search_work_titles_by_vector_minimal(
+        self, embedding: List[float], limit: int = 10, similarity_threshold: float = 0.0
+    ) -> List[Dict[str, Any]]:
+        """Vector search over Work.embedding returning only title and similarity.
+
+        This uses a label scan and computes cosine similarity in pure Cypher
+        without relying on vector indexes or procedures. It returns only the
+        minimal fields to reduce latency.
+        """
+        session = self.driver.session()
+        try:
+            query = """
+          MATCH (node:Work)
+          WHERE node.embedding IS NOT NULL AND size(node.embedding) > 0
+          WITH node, node.embedding AS v1, $embedding AS v2,
+              CASE WHEN size(node.embedding) < size($embedding)
+                  THEN size(node.embedding) ELSE size($embedding) END AS n
+          WITH node, v1, v2, n,
+              reduce(dot = 0.0, i IN range(0, n-1) | dot + coalesce(v1[i], 0.0) * coalesce(v2[i], 0.0)) AS dot,
+              sqrt(reduce(s1 = 0.0, i IN range(0, n-1) | s1 + coalesce(v1[i], 0.0)^2)) AS norm1,
+              sqrt(reduce(s2 = 0.0, i IN range(0, n-1) | s2 + coalesce(v2[i], 0.0)^2)) AS norm2
+          WITH node, CASE WHEN norm1 = 0 OR norm2 = 0 THEN 0.0 ELSE dot / (norm1 * norm2) END AS score
+          WHERE score >= $threshold
+          ORDER BY score DESC
+          LIMIT $limit
+          RETURN node.title AS title,
+                 score AS score
+            """
+            result = session.run(query, embedding=embedding, limit=int(limit), threshold=float(similarity_threshold))
+            out: List[Dict[str, Any]] = []
+            for record in result:
+                d = dict(record)
+                d["similarity_score"] = d.pop("score", None)
+                out.append(d)
+            return out
+        except Exception as e:
+            logger.error("Title vector search (scan) failed: %s", e)
+            return []

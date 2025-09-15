@@ -1,10 +1,11 @@
 import os
 
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from neo4j import GraphDatabase
 
+# Ensure environment variables are loaded at import time
+from config import env  # noqa: F401
 from presentation.api import (
     cover_router,
     image_router,
@@ -13,8 +14,6 @@ from presentation.api import (
     neo4j_router,
     text_generation_router,
 )
-
-load_dotenv()
 
 app = FastAPI(title="Manga Graph API", version="1.0.0")
 

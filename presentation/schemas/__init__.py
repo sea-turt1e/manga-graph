@@ -16,6 +16,8 @@ from .manga_schemas import (
     SynopsisVectorSearchRequest,
     SynopsisVectorSearchResponse,
     SynopsisVectorSearchResponseItem,
+    TitleSimilarityItem,
+    TitleSimilarityResponse,
     VectorIndexRequest,
     VectorSearchRequest,
     WorkResponse,
@@ -42,4 +44,6 @@ __all__ = [
     "SynopsisVectorSearchRequest",
     "SynopsisVectorSearchResponse",
     "SynopsisVectorSearchResponseItem",
+    "TitleSimilarityItem",
+    "TitleSimilarityResponse",
 ]

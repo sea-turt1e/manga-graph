@@ -18,6 +18,8 @@ def test_imports():
     try:
         from infrastructure.external.neo4j_repository import Neo4jMangaRepository
 
+        # Touch symbol to avoid unused warnings
+        _ = Neo4jMangaRepository
         print("✓ Neo4jMangaRepository imported successfully")
     except ImportError as e:
         print(f"✗ Failed to import Neo4jMangaRepository: {e}")
@@ -26,6 +28,7 @@ def test_imports():
     try:
         from neo4j import GraphDatabase
 
+        _ = GraphDatabase
         print("✓ Neo4j driver imported successfully")
     except ImportError as e:
         print(f"✗ Failed to import Neo4j driver: {e}")
@@ -41,15 +44,14 @@ def test_neo4j_connection():
 
     uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
     user = os.getenv("NEO4J_USER", "neo4j")
-    password = os.getenv("NEO4J_PASSWORD", "password")
-
     print(f"Connecting to: {uri}")
     print(f"User: {user}")
 
     try:
         from infrastructure.external.neo4j_repository import Neo4jMangaRepository
 
-        repo = Neo4jMangaRepository(uri=uri, user=user, password=password)
+        # Uses environment variables loaded externally
+        repo = Neo4jMangaRepository()
         print("✓ Neo4j connection successful")
         repo.close()
         return True

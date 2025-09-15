@@ -28,12 +28,7 @@ class Neo4jMediaArtsService:
             try:
                 self.neo4j_repository = neo4j_repository or Neo4jMangaRepository()
                 self.use_mock = False
-                # Test connection by getting stats
-                stats = self.neo4j_repository.get_database_statistics()
-                if not stats or stats.get("work_count", 0) == 0:
-                    logger.warning("Neo4j database appears to be empty, switching to mock service")
-                    self.neo4j_repository = MockNeo4jService()
-                    self.use_mock = True
+                logger.info("Neo4j repository initialized (real mode)")
             except Exception as e:
                 logger.error(f"Failed to initialize Neo4j repository: {e}")
                 logger.info("Using mock service for Neo4j data")
@@ -66,6 +61,8 @@ class Neo4jMediaArtsService:
         search_term: str,
         limit: int = 20,
         include_related: bool = True,
+        include_same_publisher_other_magazines: Optional[bool] = False,
+        same_publisher_other_magazines_limit: Optional[int] = 5,
         sort_total_volumes: Optional[str] = None,
         min_total_volumes: Optional[int] = None,
     ) -> Dict[str, List]:
@@ -89,19 +86,30 @@ class Neo4jMediaArtsService:
                 search_term,
                 limit,
                 include_related,
+                include_same_publisher_other_magazines=include_same_publisher_other_magazines,
+                same_publisher_other_magazines_limit=same_publisher_other_magazines_limit,
                 sort_total_volumes=sort_total_volumes,
                 min_total_volumes=min_total_volumes,
             )
 
             if self.use_mock:
-                # Mock service returns data in the correct format already
                 return result
             else:
                 return self._convert_neo4j_to_graph_format(result)
 
         except Exception as e:
             logger.error(f"Error searching manga data with related: {e}")
-            return {"nodes": [], "edges": []}
+            # On error, provide mock fallback so API still returns something meaningful
+            mock = MockNeo4jService()
+            return mock.search_manga_data_with_related(
+                search_term,
+                limit=limit,
+                include_related=include_related,
+                include_same_publisher_other_magazines=include_same_publisher_other_magazines,
+                same_publisher_other_magazines_limit=same_publisher_other_magazines_limit,
+                sort_total_volumes=sort_total_volumes,
+                min_total_volumes=min_total_volumes,
+            )
 
     def get_creator_works(self, creator_name: str, limit: int = 50) -> Dict[str, List]:
         """

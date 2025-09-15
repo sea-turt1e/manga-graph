@@ -994,6 +994,10 @@ class Neo4jMangaRepository:
                     f"Magazine related work {idx}: {related['title']} (overlap: {related.get('overlap_years', 0)} years)"
                 )
 
+            # 同時期雑誌の優先表示用に収集（include_related 節内）
+            period_magazine_ids: set = set()
+            related_work_ids: set = set()
+
             for related in magazine_period_related:
                 if related["work_id"] not in node_ids_seen:
                     related_node = {
@@ -1005,113 +1009,108 @@ class Neo4jMangaRepository:
                     }
                     nodes.append(related_node)
                     node_ids_seen.add(related["work_id"])
+                # 収集
+                related_work_ids.add(related["work_id"])
 
-                    # Add creators - collect all creators for this work first
-                    all_creators_for_related_work = []
-                    for creator in related["creators"]:
-                        if creator:
-                            # Split multiple creators and normalize each one
-                            normalized_creators = normalize_and_split_creators(creator)
-                            all_creators_for_related_work.extend(normalized_creators)
+                # Add creators - collect all creators for this work first
+                all_creators_for_related_work = []
+                for creator in related["creators"]:
+                    if creator:
+                        # Split multiple creators and normalize each one
+                        normalized_creators = normalize_and_split_creators(creator)
+                        all_creators_for_related_work.extend(normalized_creators)
 
-                    # Create individual author nodes for each creator
-                    for normalized_creator in all_creators_for_related_work:
-                        if normalized_creator:
-                            author_id = generate_normalized_id(normalized_creator, "author")
-                            if author_id not in node_ids_seen:
-                                author_node = {
-                                    "id": author_id,
-                                    "label": normalized_creator,
-                                    "type": "author",
-                                    "properties": {"source": "neo4j", "name": normalized_creator},
-                                }
-                                nodes.append(author_node)
-                                node_ids_seen.add(author_id)
-
-                            edge_id = f"{author_id}-created-{related['work_id']}"
-                            if edge_id not in edge_ids_seen:
-                                edge = {
-                                    "id": edge_id,
-                                    "source": author_id,
-                                    "target": related["work_id"],
-                                    "type": "created",
-                                    "properties": {"source": "neo4j"},
-                                }
-                                edges.append(edge)
-                                edge_ids_seen.add(edge_id)
-
-                    # Add magazines (missing part - this was causing the issue)
-                    if related.get("magazine_name"):
-                        magazine_id = generate_normalized_id(related["magazine_name"], "magazine")
-                        if magazine_id not in node_ids_seen:
-                            magazine_node = {
-                                "id": magazine_id,
-                                "label": related["magazine_name"],
-                                "type": "magazine",
-                                "properties": {"source": "neo4j", "name": related["magazine_name"]},
+                # Create individual author nodes for each creator
+                for normalized_creator in all_creators_for_related_work:
+                    if normalized_creator:
+                        author_id = generate_normalized_id(normalized_creator, "author")
+                        if author_id not in node_ids_seen:
+                            author_node = {
+                                "id": author_id,
+                                "label": normalized_creator,
+                                "type": "author",
+                                "properties": {"source": "neo4j", "name": normalized_creator},
                             }
-                            nodes.append(magazine_node)
-                            node_ids_seen.add(magazine_id)
+                            nodes.append(author_node)
+                            node_ids_seen.add(author_id)
 
-                        edge_id = f"{magazine_id}-published-{related['work_id']}"
+                        edge_id = f"{author_id}-created-{related['work_id']}"
                         if edge_id not in edge_ids_seen:
                             edge = {
                                 "id": edge_id,
-                                "source": magazine_id,
+                                "source": author_id,
                                 "target": related["work_id"],
-                                "type": "published",
+                                "type": "created",
                                 "properties": {"source": "neo4j"},
                             }
                             edges.append(edge)
                             edge_ids_seen.add(edge_id)
 
-                        # Add publisher for this magazine if available
-                        if related.get("publisher_name"):
-                            normalized_publisher = normalize_publisher_name(related["publisher_name"])
-                            if normalized_publisher:
-                                publisher_id = generate_normalized_id(normalized_publisher, "publisher")
-                                if publisher_id not in node_ids_seen:
-                                    publisher_node = {
-                                        "id": publisher_id,
-                                        "label": normalized_publisher,
-                                        "type": "publisher",
-                                        "properties": {"source": "neo4j", "name": normalized_publisher},
-                                    }
-                                    nodes.append(publisher_node)
-                                    node_ids_seen.add(publisher_id)
+                # Add magazines
+                if related.get("magazine_name"):
+                    magazine_id = generate_normalized_id(related["magazine_name"], "magazine")
+                    if magazine_id not in node_ids_seen:
+                        magazine_node = {
+                            "id": magazine_id,
+                            "label": related["magazine_name"],
+                            "type": "magazine",
+                            "properties": {"source": "neo4j", "name": related["magazine_name"]},
+                        }
+                        nodes.append(magazine_node)
+                        node_ids_seen.add(magazine_id)
+                    # 同時期雑誌としてマーク
+                    period_magazine_ids.add(magazine_id)
 
-                                # Create magazine -> publisher edge
-                                mag_pub_edge_id = f"{magazine_id}-published_by-{publisher_id}"
-                                if mag_pub_edge_id not in edge_ids_seen:
-                                    mag_pub_edge = {
-                                        "id": mag_pub_edge_id,
-                                        "source": magazine_id,
-                                        "target": publisher_id,
-                                        "type": "published_by",
-                                        "properties": {"source": "neo4j"},
-                                    }
-                                    edges.append(mag_pub_edge)
-                                    edge_ids_seen.add(mag_pub_edge_id)
-
-                    # Note: publisher nodes are now only created through magazine relationships
-                    # Direct work -> publisher edges are removed as requested
-
-                # Create "same_publisher_period" edge between main work and related work
-                if related.get("publisher_name"):
-                    edge_id = f"{main_work_id}-same_publisher_period-{related['work_id']}"
+                    edge_id = f"{magazine_id}-published-{related['work_id']}"
                     if edge_id not in edge_ids_seen:
                         edge = {
                             "id": edge_id,
-                            "source": main_work_id,
+                            "source": magazine_id,
                             "target": related["work_id"],
-                            "type": "same_publisher_period",
+                            "type": "published",
                             "properties": {
                                 "source": "neo4j",
-                                "description": f"同じ出版社({related['publisher_name']})・同時期",
+                                "is_period_overlap": True,
+                                "overlap_years": related.get("overlap_years"),
+                                "overlap_ratio": related.get("overlap_ratio"),
+                                "jaccard_similarity": related.get("jaccard_similarity"),
+                                "description": "同時期の掲載誌",
                             },
                         }
                         edges.append(edge)
                         edge_ids_seen.add(edge_id)
+
+                    # Add publisher for this magazine if available
+                    if related.get("publisher_name"):
+                        normalized_publisher = normalize_publisher_name(related["publisher_name"])
+                        if normalized_publisher:
+                            publisher_id = generate_normalized_id(normalized_publisher, "publisher")
+                            if publisher_id not in node_ids_seen:
+                                publisher_node = {
+                                    "id": publisher_id,
+                                    "label": normalized_publisher,
+                                    "type": "publisher",
+                                    "properties": {"source": "neo4j", "name": normalized_publisher},
+                                }
+                                nodes.append(publisher_node)
+                                node_ids_seen.add(publisher_id)
+
+                            # Create magazine -> publisher edge
+                            mag_pub_edge_id = f"{magazine_id}-published_by-{publisher_id}"
+                            if mag_pub_edge_id not in edge_ids_seen:
+                                mag_pub_edge = {
+                                    "id": mag_pub_edge_id,
+                                    "source": magazine_id,
+                                    "target": publisher_id,
+                                    "type": "published_by",
+                                    "properties": {"source": "neo4j"},
+                                }
+                                edges.append(mag_pub_edge)
+                                edge_ids_seen.add(mag_pub_edge_id)
+
+            # Note: publisher nodes are now only created through magazine relationships
+            # Direct work -> publisher edges are removed as requested
+            # 作品間の直接エッジは作成しない（雑誌・出版社経由で表現）
 
             # Add works from same publication period (without magazine constraint)
             period_related = self.get_related_works_by_publication_period(main_work_id, 3, 5)
@@ -1306,7 +1305,7 @@ class Neo4jMangaRepository:
                     unique_edges.append(updated_edge)
                     unique_edge_keys.add(edge_key)
 
-        # Sort nodes by relevance_score (work nodes only, excluding the main search results)
+    # Sort nodes by relevance_score (work nodes only, excluding the main search results)
         work_nodes = []
         other_nodes = []
         main_work_nodes = []
@@ -1341,8 +1340,43 @@ class Neo4jMangaRepository:
             # fallback relevance ordering
             work_nodes.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
 
-        # Combine: main results first (original order), then ordered related works, then other nodes
-        unique_nodes = main_work_nodes + work_nodes + other_nodes
+        # 同時期雑誌を最優先で表示するため、other_nodes を並び替える
+        # period_magazine_ids は include_related ブロック内で収集済みでない可能性があるため存在チェック
+        try:
+            period_magazine_ids
+        except NameError:
+            period_magazine_ids = set()
+
+        period_magazines = [n for n in other_nodes if n.get("type") == "magazine" and n.get("id") in period_magazine_ids]
+        remaining_others = [n for n in other_nodes if n not in period_magazines]
+
+        # period 雑誌に紐づく出版社を次点で優先
+        period_publisher_ids = set()
+        for e in edges:
+            if e.get("type") == "published_by" and e.get("source") in period_magazine_ids:
+                period_publisher_ids.add(e.get("target"))
+
+        period_publishers = [n for n in remaining_others if n.get("type") == "publisher" and n.get("id") in period_publisher_ids]
+        remaining_others = [n for n in remaining_others if n not in period_publishers]
+
+        # 最終的なノード順: メイン作品 -> 同時期雑誌 -> ソート済み関連作品 -> 同時期雑誌の出版社 -> その他
+        unique_nodes = main_work_nodes + period_magazines + work_nodes + period_publishers + remaining_others
+
+        # 既存の published エッジのうち、メイン作品や関連作品と period 雑誌を結ぶものにフラグを付与
+        if period_magazine_ids:
+            # 対象となる作品ID（メイン + 関連）
+            target_work_ids = {w["work_id"] for w in main_works}
+            # related_work_ids は include_related 節で収集（未定義の場合は空集合）
+            try:
+                target_work_ids.update(related_work_ids)
+            except NameError:
+                pass
+            for e in edges:
+                if e.get("type") == "published" and e.get("source") in period_magazine_ids and e.get("target") in target_work_ids:
+                    props = e.setdefault("properties", {})
+                    props.setdefault("source", "neo4j")
+                    props["is_period_overlap"] = True
+                    props.setdefault("description", "同時期の掲載誌")
 
         # Enforce overall node limit including related nodes
         if limit is not None and isinstance(limit, int) and limit > 0 and len(unique_nodes) > limit:

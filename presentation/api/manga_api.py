@@ -26,6 +26,8 @@ from presentation.schemas import (
     SynopsisVectorSearchRequest,
     SynopsisVectorSearchResponse,
     SynopsisVectorSearchResponseItem,
+    TitleSimilarityItem,
+    TitleSimilarityResponse,
     VectorIndexRequest,
     VectorSearchRequest,
     WorkResponse,
@@ -369,6 +371,10 @@ async def search_neo4j_fast(
     q: str = Query(..., description="検索キーワード"),
     limit: int = Query(20, description="結果の上限"),
     include_related: bool = Query(True, description="関連作品を含めるかどうか"),
+    include_same_publisher_other_magazines: bool = Query(
+        False, description="同じ出版社が出す別雑誌の掲載作品も含めるか"
+    ),
+    same_publisher_other_magazines_limit: int = Query(5, description="同一出版社・別雑誌の掲載作品の最大件数", ge=1),
     sort_total_volumes: Optional[str] = Query(
         None,
         description="total_volumesでソート: 'asc' または 'desc'。未指定ならタイトル既定順",
@@ -387,6 +393,8 @@ async def search_neo4j_fast(
             search_term=q,
             limit=limit,
             include_related=include_related,
+            include_same_publisher_other_magazines=include_same_publisher_other_magazines,
+            same_publisher_other_magazines_limit=same_publisher_other_magazines_limit,
             sort_total_volumes=sort_total_volumes,
             min_total_volumes=min_total_volumes,
         )
@@ -1073,29 +1081,23 @@ async def search_manga_fuzzy(
         if neo4j_service is None or neo4j_service.neo4j_repository is None:
             raise HTTPException(status_code=503, detail="Neo4j service not available")
 
-        # BatchEmbeddingProcessorを使って埋め込みを生成
-        from domain.services.batch_embedding_processor import BatchEmbeddingProcessor
-
-        processor = BatchEmbeddingProcessor(
-            embedding_method=embedding_method,
-            sentence_transformer_model="cl-nagoya/ruri-v3-310m" if embedding_method == "huggingface" else "",
-        )
+        if embedding_method == "huggingface":
+            processor = ruri_processor  # キャッシュ済みモデルを再利用してレイテンシ削減
+        else:
+            processor = BatchEmbeddingProcessor(
+                embedding_method=embedding_method,
+                sentence_transformer_model="",
+            )
 
         # クエリテキストの埋め込みを生成
         query_embedding = processor.generate_embedding(q)
 
-        # ベクトル検索を実行
-        search_results = neo4j_service.neo4j_repository.search_by_vector(
+        # ベクトルインデックス検索を実行（内部で多めに取得して再ランク）
+        filtered_results = neo4j_service.neo4j_repository.search_by_vector_index(
             embedding=query_embedding,
-            label="Work",
-            property_name="embedding",
-            limit=limit * 2,  # 閾値フィルタリング前に多めに取得
+            limit=limit,
+            similarity_threshold=similarity_threshold,
         )
-
-        # 類似度でフィルタリング
-        filtered_results = [
-            result for result in search_results if result.get("similarity_score", 0) >= similarity_threshold
-        ][:limit]
 
         # GraphResponse形式に変換
         nodes = []
@@ -1157,5 +1159,47 @@ async def search_manga_fuzzy(
 
         return GraphResponse(nodes=nodes, edges=edges, total_nodes=len(nodes), total_edges=len(edges))
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@neo4j_router.get("/vector/title-similarity", response_model=TitleSimilarityResponse)
+async def vector_title_similarity(
+    q: str = Query(..., description="検索クエリ（タイトルなど）"),
+    limit: int = Query(5, description="最大取得件数", ge=1, le=100),
+    similarity_threshold: float = Query(0.8, description="類似度の閾値（0.0-1.0）"),
+    embedding_method: str = Query("huggingface", description="埋め込み生成方法（hash, huggingface, openai）"),
+    neo4j_service: Neo4jMediaArtsService = Depends(get_neo4j_media_arts_service),
+):
+    """クエリを埋め込み化し、Work.embedding に対するタイトル類似上位を返す（title と similarity のみ）。"""
+    try:
+        if neo4j_service is None or neo4j_service.neo4j_repository is None:
+            raise HTTPException(status_code=503, detail="Neo4j service not available")
+
+        # 埋め込み生成（デフォルトは HuggingFace の Ruri）
+        if embedding_method == "huggingface":
+            processor = ruri_processor  # キャッシュ済みモデルを再利用してレイテンシ削減
+        else:
+            processor = BatchEmbeddingProcessor(
+                embedding_method=embedding_method,
+                sentence_transformer_model="",
+            )
+        query_embedding = processor.generate_embedding(q)
+
+        # 低レイテンシ用に最小フィールドのみ取得（Cypher 側で threshold を適用）
+        raw = neo4j_service.neo4j_repository.search_work_titles_by_vector_minimal(
+            embedding=query_embedding, limit=limit, similarity_threshold=similarity_threshold
+        )
+
+        items = [
+            TitleSimilarityItem(
+                title=r.get("title") or "",
+                similarity_score=float(r.get("similarity_score") or 0.0),
+            )
+            for r in raw
+        ]
+        return TitleSimilarityResponse(results=items, total=len(items))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

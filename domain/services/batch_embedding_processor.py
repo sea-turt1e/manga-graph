@@ -6,7 +6,7 @@ Batch embedding processor for generating and managing embeddings
 import logging
 import os
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from infrastructure.external.neo4j_repository import Neo4jMangaRepository
 
@@ -77,9 +77,8 @@ class BatchEmbeddingProcessor:
         self,
         embedding_method: str = "huggingface",
         sentence_transformer_model: str = "",
-        neo4j_uri: str = None,
-        neo4j_user: str = None,
-        neo4j_password: str = None,
+        repository: Optional[Neo4jMangaRepository] = None,
+        openai_api_key: Optional[str] = None,
     ):
         """
         Initialize processor
@@ -87,18 +86,15 @@ class BatchEmbeddingProcessor:
         Args:
             embedding_method: "hash", "openai", or "huggingface"
             sentence_transformer_model: Model name for sentence-transformers
-            neo4j_uri: Neo4j URI (defaults to environment variable)
-            neo4j_user: Neo4j user (defaults to environment variable)
-            neo4j_password: Neo4j password (defaults to environment variable)
+            repository: Neo4j repository instance. If None, a default repository will be created.
+            openai_api_key: API key for OpenAI embedding (prefer injection from outer layer)
         """
-        self.repository = Neo4jMangaRepository(
-            uri=neo4j_uri or os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-            user=neo4j_user or os.getenv("NEO4J_USER", "neo4j"),
-            password=neo4j_password or os.getenv("NEO4J_PASSWORD", "password"),
-        )
+        # Prefer dependency injection; fallback to default repo which reads env already loaded at composition root
+        self.repository = repository or Neo4jMangaRepository()
         self.embedding_method = embedding_method
         self.sentence_transformer_model = sentence_transformer_model
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        # Prefer injected key; fall back to environment for convenience
+        self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
         self._huggingface_model = None  # キャッシュ用
 
         logger.info(f"Initialized with embedding method: {embedding_method}")
@@ -107,6 +103,7 @@ class BatchEmbeddingProcessor:
 
     def _get_huggingface_model(self):
         """Get or initialize the Hugging Face model (cached)"""
+        logger.info(f"huggingface_model: {self._huggingface_model}")
         if self._huggingface_model is None:
             try:
                 import torch

@@ -14,15 +14,23 @@ class MockNeo4jService:
     def search_manga_data_with_related(
         self,
         search_term: str,
+        *,
         limit: int = 20,
         include_related: bool = True,
+        include_same_publisher_other_magazines: Optional[bool] = False,
+        same_publisher_other_magazines_limit: Optional[int] = 5,
         sort_total_volumes: Optional[str] = None,
+        min_total_volumes: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Return mock manga data for testing"""
-        logger.info(f"MockNeo4jService: Returning mock data for search term: '{search_term}'")
+        logger.info(
+            "MockNeo4jService: Returning mock data for search term: '%s'",
+            search_term,
+        )
 
-        # Mock data for "ONE" search
-        if search_term.lower() == "one":
+        # Mock data for "ONE" or "ONE PIECE" search
+        term = (search_term or "").strip().lower()
+        if term in ("one", "one piece", "onepiece"):
             nodes = [
                 {
                     "id": "work_one_punch_man",

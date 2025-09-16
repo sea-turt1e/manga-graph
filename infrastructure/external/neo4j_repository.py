@@ -642,43 +642,36 @@ class Neo4jMangaRepository:
                     mid = generate_normalized_id(mname, "magazine")
                     pid = generate_normalized_id(npub, "publisher")
 
-                    # Ensure Magazine node exists
-                    if mid not in node_ids_seen:
-                        nodes.append(
-                            {
-                                "id": mid,
-                                "label": mname,
-                                "type": "magazine",
-                                "properties": {"source": "neo4j", "name": mname},
-                            }
-                        )
-                        node_ids_seen.add(mid)
+                    # Only map Publisher if the Magazine node already exists in the graph.
+                    # This prevents accidentally introducing new "other magazine" nodes when
+                    # include_same_publisher_other_magazines is False or when we didn't explicitly
+                    # create such magazines in prior steps.
+                    if mid in node_ids_seen:
+                        # Ensure Publisher node exists
+                        if pid not in node_ids_seen:
+                            nodes.append(
+                                {
+                                    "id": pid,
+                                    "label": npub,
+                                    "type": "publisher",
+                                    "properties": {"source": "neo4j", "name": npub},
+                                }
+                            )
+                            node_ids_seen.add(pid)
 
-                    # Ensure Publisher node exists
-                    if pid not in node_ids_seen:
-                        nodes.append(
-                            {
-                                "id": pid,
-                                "label": npub,
-                                "type": "publisher",
-                                "properties": {"source": "neo4j", "name": npub},
-                            }
-                        )
-                        node_ids_seen.add(pid)
-
-                    # Add magazine -> publisher edge
-                    eid = f"{mid}-published_by-{pid}"
-                    if eid not in edge_ids_seen:
-                        edges.append(
-                            {
-                                "id": eid,
-                                "source": mid,
-                                "target": pid,
-                                "type": "published_by",
-                                "properties": {"source": "neo4j"},
-                            }
-                        )
-                        edge_ids_seen.add(eid)
+                        # Add magazine -> publisher edge
+                        eid = f"{mid}-published_by-{pid}"
+                        if eid not in edge_ids_seen:
+                            edges.append(
+                                {
+                                    "id": eid,
+                                    "source": mid,
+                                    "target": pid,
+                                    "type": "published_by",
+                                    "properties": {"source": "neo4j"},
+                                }
+                            )
+                            edge_ids_seen.add(eid)
         except Exception as e:
             logger.error("Failed to add magazine->publisher mappings: %s", e)
 

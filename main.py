@@ -40,13 +40,30 @@ driver = GraphDatabase.driver(
     auth=(NEO4J_USER, NEO4J_PASSWORD),
 )
 
-# Include routers
-app.include_router(manga_router)
-app.include_router(media_arts_router)
-app.include_router(neo4j_router)
-app.include_router(cover_router)
-app.include_router(image_router)
-app.include_router(text_generation_router)
+"""
+API Key Authentication
+"""
+
+# 許可されるAPIキー（Noneは除外）
+API_KEYS = [k for k in [os.getenv("API_KEY_VISUALIZER"), os.getenv("API_KEY_GRAPHRAG")] if k]
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def get_api_key(api_key: str = Security(api_key_header)):
+    if api_key and api_key in API_KEYS:
+        return api_key
+    raise HTTPException(status_code=401, detail="Invalid or missing API Key")
+
+
+# Include routers (全ルーターにAPIキー認証を適用)
+router_deps = [Depends(get_api_key)]
+app.include_router(manga_router, dependencies=router_deps)
+app.include_router(media_arts_router, dependencies=router_deps)
+app.include_router(neo4j_router, dependencies=router_deps)
+app.include_router(cover_router, dependencies=router_deps)
+app.include_router(image_router, dependencies=router_deps)
+app.include_router(text_generation_router, dependencies=router_deps)
 
 
 @app.get("/")
@@ -62,20 +79,6 @@ async def health_check():
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
-
-
-API_KEYS = [
-    os.getenv("API_KEY_VISUALIZER"),
-    os.getenv("API_KEY_GRAPHRAG"),
-]
-
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-
-
-def get_api_key(api_key: str = Security(api_key_header)):
-    if api_key in API_KEYS:
-        return api_key
-    raise HTTPException(status_code=401, detail="Invalid or missing API Key")
 
 
 @app.get("/protected")

@@ -1,7 +1,8 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import APIKeyHeader
 from neo4j import GraphDatabase
 
 # Ensure environment variables are loaded at import time
@@ -17,17 +18,18 @@ from presentation.api import (
 
 app = FastAPI(title="Manga Graph API", version="1.0.0")
 
+allow_origins = [
+    os.getenv("VISUALIZER_URL", "http://localhost:3000"),
+    os.getenv("GRAPHRAG_URL", "http://localhost:8501"),
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        os.getenv("LOCALHOST_URL", "http://localhost:3000"),
-        os.getenv("PRODUCTION_URL"),
-    ],
+    allow_origins=allow_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT"],
     allow_headers=["*"],
 )
-
 
 NEO4J_URI = os.getenv("NEO4J_URI")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
@@ -60,6 +62,25 @@ async def health_check():
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
+
+
+API_KEYS = [
+    os.getenv("API_KEY_VISUALIZER"),
+    os.getenv("API_KEY_GRAPHRAG"),
+]
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def get_api_key(api_key: str = Security(api_key_header)):
+    if api_key in API_KEYS:
+        return api_key
+    raise HTTPException(status_code=401, detail="Invalid or missing API Key")
+
+
+@app.get("/protected")
+def protected_endpoint(api_key: str = Depends(get_api_key)):
+    return {"message": "Access granted"}
 
 
 if __name__ == "__main__":

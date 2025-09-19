@@ -527,28 +527,138 @@ class Neo4jMangaRepository:
                 main_publishers.update([normalize_publisher_name(p) for p in w.get("publishers", []) if p])
                 main_magazines.update([m for m in w.get("magazines", []) if m])
 
-            query = """
-            UNWIND $publisher_names AS pubName
-            MATCH (p:Publisher)
-            WHERE toLower(p.name) = toLower(pubName)
-            MATCH (m:Magazine)-[:PUBLISHED_BY]->(p)
-            WHERE NOT toLower(m.title) IN [x IN $main_magazines | toLower(x)]
-            MATCH (w:Work)-[:PUBLISHED_IN]->(m)
-            OPTIONAL MATCH (w)-[:CREATED_BY]->(a:Author)
-            RETURN w.id AS work_id, w.title AS title,
-                   w.first_published AS first_published, w.last_published AS last_published,
-                   w.total_volumes AS total_volumes,
-                   collect(DISTINCT a.name) AS creators,
-                   m.title AS magazine_name,
-                   p.name AS publisher_name
-            LIMIT $limit
-            """
-            result = self._run(
-                query,
-                publisher_names=list(main_publishers),
-                main_magazines=list(main_magazines),
-                limit=same_publisher_other_magazines_limit or 5,
+            # 基準となる代表作品（同時代判定のため）: 既存ロジックと同じく雑誌数が最大の作品を優先
+            anchor_work = max(main_works, key=lambda w: len(w.get("magazines", []))) if main_works else main_works[0]
+
+            def _year_from_date(s: Optional[str]) -> Optional[int]:
+                if not s:
+                    return None
+                try:
+                    return int(str(s)[:4])
+                except Exception:
+                    return None
+
+            anchor_first_year = _year_from_date(anchor_work.get("first_published")) or _year_from_date(
+                anchor_work.get("last_published")
             )
+            anchor_last_year = _year_from_date(anchor_work.get("last_published")) or _year_from_date(
+                anchor_work.get("first_published")
+            )
+
+            # アンカー作品の作者（小文字正規化）を算出
+            anchor_authors_set = set()
+            for c in anchor_work.get("creators", []) or []:
+                for creator in normalize_and_split_creators(c):
+                    if creator:
+                        anchor_authors_set.add(normalize_creator_name(creator).lower())
+
+            anchor_authors_lower = list(anchor_authors_set)
+
+            # 代表作の年情報が取れる場合は「同時代」フィルタを適用、取れない場合は従来のクエリでフォールバック
+            if anchor_first_year is not None and anchor_last_year is not None:
+                year_window = 2  # 既存の同時代取得で用いているウィンドウに合わせる
+                query = """
+                UNWIND $publisher_names AS pubName
+                MATCH (p:Publisher)
+                WHERE toLower(p.name) = toLower(pubName)
+                MATCH (m:Magazine)-[:PUBLISHED_BY]->(p)
+                WHERE NOT toLower(m.title) IN [x IN $main_magazines | toLower(x)]
+                MATCH (w:Work)-[:PUBLISHED_IN]->(m)
+                OPTIONAL MATCH (w)-[:CREATED_BY]->(a:Author)
+                WITH w, m, p, collect(DISTINCT a.name) AS creators,
+                     toInteger(substring(w.first_published,0,4)) AS wf,
+                     toInteger(substring(w.last_published,0,4)) AS wl,
+                     $anchor_first_year AS af,
+                     $anchor_last_year AS al,
+                     $year_window AS yw
+                WITH w, m, p, creators,
+                     coalesce(wf, wl) AS w_start_raw,
+                     coalesce(wl, wf) AS w_end_raw,
+                     af, al, yw
+                // w_start/w_end を補正（単一年のみの場合など）
+                WITH w, m, p, creators,
+                     CASE WHEN w_start_raw IS NULL THEN w_end_raw ELSE w_start_raw END AS w_start,
+                     CASE WHEN w_end_raw IS NULL THEN w_start_raw ELSE w_end_raw END AS w_end,
+                     af, al, yw
+                // 期間の近傍/重なりでフィルタ
+                WHERE w_start IS NOT NULL AND w_end IS NOT NULL
+                  AND (w_end >= af - yw AND w_start <= al + yw)
+                WITH w, m, p, creators, w_start, w_end, af, al
+                // 重なり年数とギャップを算出
+                WITH w, m, p, creators, w_start, w_end, af, al,
+                     CASE WHEN w_start > af THEN w_start ELSE af END AS overlap_start,
+                     CASE WHEN w_end < al THEN w_end ELSE al END AS overlap_end
+             WITH w, m, p, creators,
+                 w_start, w_end, af, al,
+                 CASE WHEN overlap_end >= overlap_start THEN overlap_end - overlap_start + 1 ELSE 0 END AS overlap_years,
+                 CASE
+                    WHEN w_end < af THEN af - w_end
+                    WHEN w_start > al THEN w_start - al
+                    ELSE 0
+                 END AS gap
+             // Jaccard 類似度 = 重複期間 / (A期間 + B期間 - 重複期間)
+                WITH w, m, p, creators, w_start, w_end, af, al, overlap_years, gap,
+                 CASE WHEN w_end >= w_start THEN (w_end - w_start + 1) ELSE 0 END AS w_dur,
+                 CASE WHEN al >= af THEN (al - af + 1) ELSE 0 END AS a_dur
+                // 共有作者数（アンカー作品の作者と候補作品の作者の小文字一致）
+                WITH w, m, p, creators, w_start, w_end, af, al, overlap_years, gap, w_dur, a_dur,
+                     size([c IN creators WHERE toLower(c) IN $anchor_authors_lower]) AS shared_authors_count
+                RETURN w.id AS work_id, w.title AS title,
+                       w.first_published AS first_published, w.last_published AS last_published,
+                       w.total_volumes AS total_volumes,
+                       creators AS creators,
+                       m.title AS magazine_name,
+                   p.name AS publisher_name,
+                   overlap_years AS overlap_years,
+                       gap AS period_gap,
+                   CASE
+                    WHEN (w_dur + a_dur - overlap_years) > 0
+                    THEN toFloat(overlap_years) / toFloat(w_dur + a_dur - overlap_years)
+                    ELSE 0.0
+                   END AS jaccard_similarity
+                ORDER BY shared_authors_count DESC, jaccard_similarity DESC, period_gap ASC, overlap_years DESC, toInteger(coalesce(w.total_volumes,0)) DESC, title ASC
+                LIMIT $limit
+                """
+                params = {
+                    "publisher_names": list(main_publishers),
+                    "main_magazines": list(main_magazines),
+                    "anchor_first_year": anchor_first_year,
+                    "anchor_last_year": anchor_last_year,
+                    "year_window": year_window,
+                    "anchor_authors_lower": anchor_authors_lower,
+                    "limit": same_publisher_other_magazines_limit or 5,
+                }
+            else:
+                # フォールバック（従来の挙動）
+                query = """
+                UNWIND $publisher_names AS pubName
+                MATCH (p:Publisher)
+                WHERE toLower(p.name) = toLower(pubName)
+                MATCH (m:Magazine)-[:PUBLISHED_BY]->(p)
+                WHERE NOT toLower(m.title) IN [x IN $main_magazines | toLower(x)]
+                MATCH (w:Work)-[:PUBLISHED_IN]->(m)
+                OPTIONAL MATCH (w)-[:CREATED_BY]->(a:Author)
+                WITH w, m, p, collect(DISTINCT a.name) AS creators
+                WITH w, m, p, creators,
+                     size([c IN creators WHERE toLower(c) IN $anchor_authors_lower]) AS shared_authors_count
+                RETURN w.id AS work_id, w.title AS title,
+                       w.first_published AS first_published, w.last_published AS last_published,
+                       w.total_volumes AS total_volumes,
+                       creators AS creators,
+                       m.title AS magazine_name,
+                       p.name AS publisher_name,
+                       shared_authors_count AS shared_authors_count
+                ORDER BY shared_authors_count DESC, toInteger(coalesce(w.total_volumes,0)) DESC, title ASC
+                LIMIT $limit
+                """
+                params = {
+                    "publisher_names": list(main_publishers),
+                    "main_magazines": list(main_magazines),
+                    "anchor_authors_lower": anchor_authors_lower,
+                    "limit": same_publisher_other_magazines_limit or 5,
+                }
+
+            result = self._run(query, **params)
             same_pub_others = [dict(r) for r in result]
             for r in same_pub_others:
                 if min_total_volumes is not None and int(r.get("total_volumes") or 0) < min_total_volumes:

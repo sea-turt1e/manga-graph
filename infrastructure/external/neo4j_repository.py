@@ -192,7 +192,10 @@ class Neo4jMangaRepository:
             same_publisher_other_magazines_limit,
         )
 
-        main_works = self.search_manga_works(search_term, limit)
+        # NOTE: 外部の limit は「同時期の掲載誌」の上限として扱う。
+        # メイン作品や出版物の取得は内部的に余裕を持った上限で集める。
+        internal_main_limit = max(int(limit) * 5, 50) if isinstance(limit, int) else 50
+        main_works = self.search_manga_works(search_term, internal_main_limit)
         if min_total_volumes is not None:
             filtered = [
                 w for w in main_works if (int(w.get("total_volumes", w.get("work_count", 0)) or 0) >= min_total_volumes)
@@ -214,7 +217,8 @@ class Neo4jMangaRepository:
 
             main_works.sort(key=_extract_total, reverse=sort_total_volumes == "desc")
 
-        publications = self.search_manga_publications(search_term, limit)
+        internal_publication_limit = max(int(limit) * 3, 30) if isinstance(limit, int) else 30
+        publications = self.search_manga_publications(search_term, internal_publication_limit)
 
         # (reserved) Keep track of main work ids for potential ordering if needed in future
         # main_work_ids = {w["work_id"] for w in main_works}
@@ -444,7 +448,30 @@ class Neo4jMangaRepository:
 
             period_magazine_ids: set = set()
             related_work_ids: set = set()
+            # 「同時期の掲載誌」上限制御（ユニーク雑誌 + エッジ総数）
+            period_overlap_limit = int(limit) if isinstance(limit, int) else None
+            period_overlap_mids: set = set()
+            period_overlap_edge_count = 0
             for r in period_related:
+                # 雑誌名が無い場合はスキップ
+                mag_name = r.get("magazine_name")
+                if not mag_name:
+                    continue
+
+                mid = generate_normalized_id(mag_name, "magazine")
+
+                # ユニーク雑誌数の制限（新規 mid のみ制御）
+                is_new_mid = mid not in period_overlap_mids
+                if period_overlap_limit is not None and is_new_mid and len(period_overlap_mids) >= period_overlap_limit:
+                    # 新規雑誌を増やせないので、このレコードはスキップ（ワーク/オーサーも追加しない）
+                    continue
+
+                # エッジ本数の制限（総数）
+                if period_overlap_limit is not None and period_overlap_edge_count >= period_overlap_limit:
+                    # 上限に達しているのでスキップ（ワーク/オーサーも追加しない）
+                    continue
+
+                # ここから追加許可
                 if r["work_id"] not in node_ids_seen:
                     nodes.append(
                         {
@@ -457,6 +484,7 @@ class Neo4jMangaRepository:
                     )
                     node_ids_seen.add(r["work_id"])
                 related_work_ids.add(r["work_id"])
+
                 # authors
                 all_creators: List[str] = []
                 for c in r.get("creators", []) or []:
@@ -476,48 +504,51 @@ class Neo4jMangaRepository:
                             }
                         )
                         node_ids_seen.add(aid)
-                    eid = f"{aid}-created-{r['work_id']}"
-                    if eid not in edge_ids_seen:
+                    eid_a = f"{aid}-created-{r['work_id']}"
+                    if eid_a not in edge_ids_seen:
                         edges.append(
                             {
-                                "id": eid,
+                                "id": eid_a,
                                 "source": aid,
                                 "target": r["work_id"],
                                 "type": "created",
                                 "properties": {"source": "neo4j"},
                             }
                         )
-                        edge_ids_seen.add(eid)
+                        edge_ids_seen.add(eid_a)
+
                 # magazine
-                if r.get("magazine_name"):
-                    mid = generate_normalized_id(r["magazine_name"], "magazine")
-                    if mid not in node_ids_seen:
-                        nodes.append(
-                            {
-                                "id": mid,
-                                "label": r["magazine_name"],
-                                "type": "magazine",
-                                "properties": {"source": "neo4j", "name": r["magazine_name"]},
-                            }
-                        )
-                        node_ids_seen.add(mid)
-                    period_magazine_ids.add(mid)
-                    eid = f"{mid}-published-{r['work_id']}"
-                    if eid not in edge_ids_seen:
-                        edges.append(
-                            {
-                                "id": eid,
-                                "source": mid,
-                                "target": r["work_id"],
-                                "type": "published",
-                                "properties": {
-                                    "source": "neo4j",
-                                    "is_period_overlap": True,
-                                    "description": "同時期の掲載誌",
-                                },
-                            }
-                        )
-                        edge_ids_seen.add(eid)
+                if mid not in node_ids_seen:
+                    nodes.append(
+                        {
+                            "id": mid,
+                            "label": mag_name,
+                            "type": "magazine",
+                            "properties": {"source": "neo4j", "name": mag_name},
+                        }
+                    )
+                    node_ids_seen.add(mid)
+                period_magazine_ids.add(mid)
+
+                eid = f"{mid}-published-{r['work_id']}"
+                if eid not in edge_ids_seen:
+                    edges.append(
+                        {
+                            "id": eid,
+                            "source": mid,
+                            "target": r["work_id"],
+                            "type": "published",
+                            "properties": {
+                                "source": "neo4j",
+                                "is_period_overlap": True,
+                                "description": "同時期の掲載誌",
+                            },
+                        }
+                    )
+                    edge_ids_seen.add(eid)
+                    period_overlap_edge_count += 1
+                    if is_new_mid:
+                        period_overlap_mids.add(mid)
 
         # same publisher other magazines
         if include_same_publisher_other_magazines and main_works:
@@ -843,26 +874,10 @@ class Neo4jMangaRepository:
             work_nodes.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
         unique_nodes = work_nodes + other_nodes
 
-        # Apply limit to work nodes only, and keep all neighbor nodes connected to those works
-        if limit and isinstance(limit, int):
-            top_works = work_nodes[:limit]
-            kept_ids = {n["id"] for n in top_works}
-
-            # Include neighbor nodes that are connected to the kept works via edges
-            for e in unique_edges:
-                s = e.get("source", e.get("from"))
-                t = e.get("target", e.get("to"))
-                if s in kept_ids or t in kept_ids:
-                    kept_ids.add(s)
-                    kept_ids.add(t)
-
-            # Filter nodes and edges to those within the kept id set
-            unique_nodes = [n for n in unique_nodes if n["id"] in kept_ids]
-            unique_edges = [
-                e
-                for e in unique_edges
-                if (e.get("source", e.get("from")) in kept_ids and e.get("target", e.get("to")) in kept_ids)
-            ]
+        # これまでの挙動では limit をワークノード数に適用していたが、
+        # 仕様変更により limit は「同時期の掲載誌」の上限にのみ適用する。
+        # そのため、ここでのワークノード絞り込みは行わない。
+        # 必要に応じて別パラメータで制御すること。
 
         return {"nodes": unique_nodes, "edges": unique_edges}
 

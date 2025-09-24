@@ -135,22 +135,71 @@ class Neo4jMangaRepository:
         query = """
         MATCH (w:Work {id: $work_id})-[:PUBLISHED_IN]->(m:Magazine)
         OPTIONAL MATCH (w)<-[:CREATED_BY]-(aw:Author)
-        WITH w, m, collect(DISTINCT aw) AS authors
+        WITH w, m, collect(DISTINCT aw.name) AS anchor_authors
+
+        // 同じ雑誌に掲載された他作品を候補に
         MATCH (other:Work)-[:PUBLISHED_IN]->(m)
         WHERE other.id <> w.id
-        WITH w, m, other, authors
+
         OPTIONAL MATCH (other)-[:CREATED_BY]->(oa:Author)
-        WITH w, m, other, authors, collect(DISTINCT oa.name) AS creators
+        WITH w, m, other, anchor_authors, collect(DISTINCT oa.name) AS creators
+
+        // 年情報の抽出（first/last どちらかしか無いケースに対応）
+        WITH w, m, other, creators,
+             toInteger(substring(w.first_published, 0, 4))  AS wf,
+             toInteger(substring(w.last_published, 0, 4))   AS wl,
+             toInteger(substring(other.first_published, 0, 4)) AS of,
+             toInteger(substring(other.last_published, 0, 4))  AS ol
+        WITH w, m, other, creators,
+             coalesce(wf, wl) AS w_start_raw,
+             coalesce(wl, wf) AS w_end_raw,
+             coalesce(of, ol) AS o_start_raw,
+             coalesce(ol, of) AS o_end_raw
+        WITH w, m, other, creators,
+             CASE WHEN w_start_raw IS NULL THEN w_end_raw ELSE w_start_raw END AS w_start,
+             CASE WHEN w_end_raw IS NULL THEN w_start_raw ELSE w_end_raw END AS w_end,
+             CASE WHEN o_start_raw IS NULL THEN o_end_raw ELSE o_start_raw END AS o_start,
+             CASE WHEN o_end_raw IS NULL THEN o_start_raw ELSE o_end_raw END AS o_end
+
+        // 期間の近傍/重なりフィルタ（±year_window）
+        WHERE w_start IS NOT NULL AND w_end IS NOT NULL
+          AND o_start IS NOT NULL AND o_end IS NOT NULL
+          AND (o_end >= w_start - $year_window AND o_start <= w_end + $year_window)
+
+        // 重複年数・ギャップ・Jaccard 類似度算出
+        WITH w, m, other, creators, w_start, w_end, o_start, o_end,
+             CASE WHEN o_start > w_start THEN o_start ELSE w_start END AS overlap_start,
+             CASE WHEN o_end   < w_end   THEN o_end   ELSE w_end   END AS overlap_end
+        WITH w, m, other, creators, w_start, w_end, o_start, o_end,
+             CASE WHEN overlap_end >= overlap_start THEN overlap_end - overlap_start + 1 ELSE 0 END AS overlap_years,
+             CASE
+               WHEN o_end   < w_start THEN w_start - o_end
+               WHEN o_start > w_end   THEN o_start - w_end
+               ELSE 0
+             END AS period_gap,
+             CASE WHEN w_end >= w_start THEN (w_end - w_start + 1) ELSE 0 END AS w_dur,
+             CASE WHEN o_end >= o_start THEN (o_end - o_start + 1) ELSE 0 END AS o_dur
+        WITH m, other, creators, overlap_years, period_gap, w_dur, o_dur,
+             CASE
+               WHEN (w_dur + o_dur - overlap_years) > 0
+               THEN toFloat(overlap_years) / toFloat(w_dur + o_dur - overlap_years)
+               ELSE 0.0
+             END AS jaccard_similarity
+
         RETURN other.id AS work_id,
                other.title AS title,
                other.total_volumes AS total_volumes,
                m.title AS magazine_name,
                creators AS creators,
-               1000 AS relevance_score,
-               0 AS overlap_years,
-               0.0 AS overlap_ratio,
-               0.0 AS jaccard_similarity,
-               head(creators) AS publisher_name
+               overlap_years AS overlap_years,
+               period_gap AS period_gap,
+               jaccard_similarity AS jaccard_similarity,
+               1000 AS relevance_score
+        ORDER BY jaccard_similarity DESC,
+                 period_gap ASC,
+                 overlap_years DESC,
+                 toInteger(coalesce(other.total_volumes,0)) DESC,
+                 title ASC
         LIMIT $limit
         """
         result = self._run(query, work_id=work_id, year_window=year_window, limit=limit)

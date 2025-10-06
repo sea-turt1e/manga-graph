@@ -1,0 +1,43 @@
+[project]
+name = "manga-graph"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiofiles==23.2.1",
+    "aiohttp==3.9.1",
+    "fastapi==0.104.1",
+    "httpx==0.25.2",
+    "kanjiconv==0.1.2",
+    "neo4j==5.14.1",
+    "numpy>=1.24.0",
+    "openai==1.108.0",
+    "pandas==2.1.3",
+    "protobuf==6.32.0",
+    "pydantic==2.5.0",
+    "python-dotenv==1.0.0",
+    "python-multipart==0.0.6",
+    "requests==2.31.0",
+    "SudachiPy==0.6.10",
+    "sentence-transformers>=2.2.0",
+    "sentencepiece==0.2.1",
+    "sparqlwrapper==2.0.0",
+    "torch>=2.8.0",
+    "torchvision>=0.23.0",
+    "tqdm==4.67.1",
+    "unidic",
+    "uvicorn==0.24.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==7.4.3",
+    "pytest-asyncio==0.21.1",
+]
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/cpu"
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"

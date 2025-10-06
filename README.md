@@ -90,13 +90,19 @@ python scripts/add_synopsis_from_manga_csv.py `manga_csv_path` --create-index
 ### 開発環境の起動
 ```bash
 # 依存関係のインストール
+## pipの場合
 pip install -r requirements.txt
-
+# uvの場合
+uv sync --frozen --no-dev --index-strategy unsafe-best-match
+```
 # 日本語形態素解析の辞書をダウンロード
 python -m unidic download
 
 # 開発サーバー起動
+## pipの場合
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
+## uvの場合
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 

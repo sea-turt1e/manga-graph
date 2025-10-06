@@ -16,10 +16,10 @@ cd manga-graph
 
 ```bash
 # 依存関係のインストール
-pip install -r requirements.txt
+uv sync
 
 # 日本語形態素解析の辞書をダウンロード
-python -m unidic download
+uv run python -m unidic download
 
 # Docker環境の起動
 docker-compose up -d

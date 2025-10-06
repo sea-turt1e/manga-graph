@@ -51,8 +51,13 @@ docker-compose logs -f
 # .envファイルをコピーして設定
 cp .env.example .env
 
-# .envファイルを編集してOpenAI API Keyを設定
-# OPENAI_API_KEY=your_openai_api_key_here
+# .envファイルを作成して以下を設定
+```bash
+LOCALHOST_URL="http://localhost:3000"
+PRODUCTION_URL="your_production_url"
+NEO4J_URI="your_neo4j_uri" 
+NEO4J_USER="your_neo4j_username"
+NEO4J_PASSWORD="your_neo4j_password"
 ```
 
 ### 4. データの準備と投入
@@ -62,6 +67,17 @@ python scripts/data_import/download_mediaarts_data.py
 
 # Neo4jにデータを投入
 python scripts/data_import/import_to_neo4j.py
+
+# ここからはオプション
+## 漫画の巻数データをNeo4jに保存
+python scripts/update_total_volumes.py --apply
+
+## 漫画のタイトル名のembeddingを生成してNeo4jに保存
+python scripts/add_vector_embeddings.py
+
+## 漫画のあらすじ（英語）とそのembeddingを生成してNeo4jに保存。`manga_csv_path`はMyAnimeListから取得したCSVファイルのパス
+python scripts/add_synopsis_from_manga_csv.py `manga_csv_path` --create-index
+
 ```
 
 ### 4. アプリケーションへのアクセス
@@ -89,6 +105,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 - `GET /health` - ヘルスチェック
 - `GET /api/v1/neo4j/search` - Neo4jグラフデータの検索
+- `GET /api/v1/neo4j/vector/title-similarity` - タイトル類似度検索
 
 詳細なAPI仕様は http://localhost:8000/docs で確認できます。
 
@@ -139,10 +156,15 @@ python -m pytest tests/e2e/ -->
 
 Apache License 2.0
 
-## 使用データセット
+## 出典
 このアプリケーションは、以下のデータセットを使用しています：
-- 独立行政法人国立美術館国立アートリサーチセンター「[メディア芸術データベース](https://mediaarts-db.artmuseums.go.jp/)」
+- [メディア芸術データベース](https://mediaarts-db.artmuseums.go.jp/)
+  - 出典：独立行政法人国立美術館国立アートリサーチセンター「メディア芸術データベース」 （https://mediaarts-db.artmuseums.go.jp/）
+  - 独立行政法人国立美術館国立アートリサーチセンター「メディア芸術データベース」（https://mediaarts-db.artmuseums.go.jp/）を加工してデータを作成
 - [OpenBD](https://openbd.jp/)
+  - 「OpenBD」 （https://openbd.jp/） を利用しています。
+- [MyAnimeList Dataset](https://www.kaggle.com/datasets/azathoth42/myanimelist)
+  - 本プロジェクトはMyAnimeList Dataset（MyAnimeList.net） のデータを利用しています。データベースは Open Database License (ODbL) v1.0、個々のコンテンツは Database Contents License (DbCL) v1.0 に基づきます。ライセンス条件に従い帰属表示と通知保持を行っています。」
 
 
 ## ご協力

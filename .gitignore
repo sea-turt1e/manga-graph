@@ -199,10 +199,11 @@ cython_debug/
 # Media Arts Database files (large datasets)
 data/*
 *.zip
-*.json
 !data/mediaarts/.gitkeep
 !scripts/data_import/brand_to_magazine.json
 
 # Cache directories
 cache/
 !cache/.gitkeep
+
+.vscode/settings.json

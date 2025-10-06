@@ -1185,6 +1185,7 @@ async def vector_title_similarity(
                 sentence_transformer_model="",
             )
         query_embedding = processor.generate_embedding(q)
+        print(f"Generated embedding with method={embedding_method}, dim={len(query_embedding)}")
 
         # 低レイテンシ用に最小フィールドのみ取得（Cypher 側で threshold を適用）
         raw = neo4j_service.neo4j_repository.search_work_titles_by_vector_minimal(

@@ -1,0 +1,2630 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Manga Graph API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/search": {
+      "post": {
+        "tags": [
+          "manga"
+        ],
+        "summary": "Search Manga",
+        "description": "Search for manga and related data",
+        "operationId": "search_manga_api_v1_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/authors": {
+      "get": {
+        "tags": [
+          "manga"
+        ],
+        "summary": "Get Authors",
+        "description": "Get all authors",
+        "operationId": "get_authors_api_v1_authors_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AuthorResponse"
+                  },
+                  "type": "array",
+                  "title": "Response Get Authors Api V1 Authors Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/works": {
+      "get": {
+        "tags": [
+          "manga"
+        ],
+        "summary": "Get Works",
+        "description": "Get all works",
+        "operationId": "get_works_api_v1_works_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WorkResponse"
+                  },
+                  "type": "array",
+                  "title": "Response Get Works Api V1 Works Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/magazines": {
+      "get": {
+        "tags": [
+          "manga"
+        ],
+        "summary": "Get Magazines",
+        "description": "Get all magazines",
+        "operationId": "get_magazines_api_v1_magazines_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MagazineResponse"
+                  },
+                  "type": "array",
+                  "title": "Response Get Magazines Api V1 Magazines Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/media-arts/search": {
+      "get": {
+        "tags": [
+          "media-arts"
+        ],
+        "summary": "Search Media Arts",
+        "description": "文化庁メディア芸術データベースから漫画データを検索",
+        "operationId": "search_media_arts_api_v1_media_arts_search_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "検索キーワード",
+              "title": "Q"
+            },
+            "description": "検索キーワード"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "結果の上限",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "結果の上限"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/media-arts/creator/{creator_name}": {
+      "get": {
+        "tags": [
+          "media-arts"
+        ],
+        "summary": "Get Creator Works Media Arts",
+        "description": "文化庁メディア芸術データベースから作者の作品を取得",
+        "operationId": "get_creator_works_media_arts_api_v1_media_arts_creator__creator_name__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "creator_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Creator Name"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "結果の上限",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "結果の上限"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/media-arts/magazines": {
+      "get": {
+        "tags": [
+          "media-arts"
+        ],
+        "summary": "Get Manga Magazines Media Arts",
+        "description": "文化庁メディア芸術データベースから漫画雑誌データを取得",
+        "operationId": "get_manga_magazines_media_arts_api_v1_media_arts_magazines_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "結果の上限",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "結果の上限"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/media-arts/fulltext-search": {
+      "get": {
+        "tags": [
+          "media-arts"
+        ],
+        "summary": "Fulltext Search Media Arts",
+        "description": "文化庁メディア芸術データベースで全文検索",
+        "operationId": "fulltext_search_media_arts_api_v1_media_arts_fulltext_search_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "検索キーワード",
+              "title": "Q"
+            },
+            "description": "検索キーワード"
+          },
+          {
+            "name": "search_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "検索タイプ",
+              "default": "simple_query_string",
+              "title": "Search Type"
+            },
+            "description": "検索タイプ"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "結果の上限",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "結果の上限"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/media-arts/search-with-related": {
+      "get": {
+        "tags": [
+          "media-arts"
+        ],
+        "summary": "Search Media Arts With Related",
+        "description": "文化庁メディア芸術データベースから漫画データを検索（関連作品含む）",
+        "operationId": "search_media_arts_with_related_api_v1_media_arts_search_with_related_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "検索キーワード",
+              "title": "Q"
+            },
+            "description": "検索キーワード"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "結果の上限",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "結果の上限"
+          },
+          {
+            "name": "include_related",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "関連作品を含めるかどうか",
+              "default": true,
+              "title": "Include Related"
+            },
+            "description": "関連作品を含めるかどうか"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/media-arts/magazine-relationships": {
+      "get": {
+        "tags": [
+          "media-arts"
+        ],
+        "summary": "Get Magazine Relationships Media Arts",
+        "description": "文化庁メディア芸術データベースから同じ掲載誌・同じ時期の漫画関係を取得",
+        "operationId": "get_magazine_relationships_media_arts_api_v1_media_arts_magazine_relationships_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "magazine_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "雑誌名（部分一致）",
+              "title": "Magazine Name"
+            },
+            "description": "雑誌名（部分一致）"
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "出版年",
+              "title": "Year"
+            },
+            "description": "出版年"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "結果の上限",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "結果の上限"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/neo4j/vector/search/synopsis": {
+      "post": {
+        "tags": [
+          "neo4j-fast"
+        ],
+        "summary": "Synopsis Vector Search",
+        "description": "Work.synopsis_embedding を利用した synopsis 類似検索 (title と synopsis を上位 n 件返却)",
+        "operationId": "synopsis_vector_search_api_v1_neo4j_vector_search_synopsis_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SynopsisVectorSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SynopsisVectorSearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/neo4j/search": {
+      "get": {
+        "tags": [
+          "neo4j-fast"
+        ],
+        "summary": "Search Neo4J Fast",
+        "description": "Neo4jを使用した高速検索",
+        "operationId": "search_neo4j_fast_api_v1_neo4j_search_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "検索キーワード",
+              "title": "Q"
+            },
+            "description": "検索キーワード"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "結果の上限",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "結果の上限"
+          },
+          {
+            "name": "include_related",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "関連作品を含めるかどうか",
+              "default": true,
+              "title": "Include Related"
+            },
+            "description": "関連作品を含めるかどうか"
+          },
+          {
+            "name": "include_same_publisher_other_magazines",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "同じ出版社が出す別雑誌の掲載作品も含めるか",
+              "default": false,
+              "title": "Include Same Publisher Other Magazines"
+            },
+            "description": "同じ出版社が出す別雑誌の掲載作品も含めるか"
+          },
+          {
+            "name": "same_publisher_other_magazines_limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "同一出版社・別雑誌の掲載作品の最大件数",
+              "default": 5,
+              "title": "Same Publisher Other Magazines Limit"
+            },
+            "description": "同一出版社・別雑誌の掲載作品の最大件数"
+          },
+          {
+            "name": "sort_total_volumes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(asc|desc)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "total_volumesでソート: 'asc' または 'desc'。未指定ならタイトル既定順",
+              "title": "Sort Total Volumes"
+            },
+            "description": "total_volumesでソート: 'asc' または 'desc'。未指定ならタイトル既定順"
+          },
+          {
+            "name": "min_total_volumes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "total_volumes がこの値以上の作品のみ表示（メイン + related）。メインで0件ならフィルタ無効化して再表示",
+              "title": "Min Total Volumes"
+            },
+            "description": "total_volumes がこの値以上の作品のみ表示（メイン + related）。メインで0件ならフィルタ無効化して再表示"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/neo4j/creator/{creator_name}": {
+      "get": {
+        "tags": [
+          "neo4j-fast"
+        ],
+        "summary": "Get Creator Works Neo4J",
+        "description": "Neo4jを使用した作者の作品検索",
+        "operationId": "get_creator_works_neo4j_api_v1_neo4j_creator__creator_name__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "creator_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Creator Name"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "結果の上限",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "結果の上限"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/neo4j/stats": {
+      "get": {
+        "tags": [
+          "neo4j-fast"
+        ],
+        "summary": "Get Neo4J Stats",
+        "description": "Neo4jデータベースの統計情報を取得",
+        "operationId": "get_neo4j_stats_api_v1_neo4j_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/neo4j/vector/create-index": {
+      "post": {
+        "tags": [
+          "neo4j-fast"
+        ],
+        "summary": "Create Vector Index",
+        "description": "Create a vector index for semantic search",
+        "operationId": "create_vector_index_api_v1_neo4j_vector_create_index_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VectorIndexRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/neo4j/vector/search": {
+      "post": {
+        "tags": [
+          "neo4j-fast"
+        ],
+        "summary": "Vector Search Manga",
+        "description": "Search manga using vector similarity",
+        "operationId": "vector_search_manga_api_v1_neo4j_vector_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VectorSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/neo4j/vector/add-embedding": {
+      "post": {
+        "tags": [
+          "neo4j-fast"
+        ],
+        "summary": "Add Embedding To Work",
+        "description": "Add embedding vector to a work node",
+        "operationId": "add_embedding_to_work_api_v1_neo4j_vector_add_embedding_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddEmbeddingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/neo4j/vector/progress": {
+      "get": {
+        "tags": [
+          "neo4j-fast"
+        ],
+        "summary": "Get Vector Progress",
+        "description": "Get progress of vector embedding addition",
+        "operationId": "get_vector_progress_api_v1_neo4j_vector_progress_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/neo4j/vector/batch-add": {
+      "post": {
+        "tags": [
+          "neo4j-fast"
+        ],
+        "summary": "Batch Add Embeddings",
+        "description": "Batch add embeddings to nodes",
+        "operationId": "batch_add_embeddings_api_v1_neo4j_vector_batch_add_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "node_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Node type to process (Work, Author, Magazine)",
+              "default": "Work",
+              "title": "Node Type"
+            },
+            "description": "Node type to process (Work, Author, Magazine)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Number of nodes to process",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Number of nodes to process"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/neo4j/search-fuzzy": {
+      "get": {
+        "tags": [
+          "neo4j-fast"
+        ],
+        "summary": "Search Manga Fuzzy",
+        "description": "Neo4jのembedding列を使った漫画タイトルの曖昧検索",
+        "operationId": "search_manga_fuzzy_api_v1_neo4j_search_fuzzy_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "曖昧検索のクエリテキスト",
+              "title": "Q"
+            },
+            "description": "曖昧検索のクエリテキスト"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "結果の上限",
+              "default": 10,
+              "title": "Limit"
+            },
+            "description": "結果の上限"
+          },
+          {
+            "name": "similarity_threshold",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "description": "類似度の閾値（0.0-1.0）",
+              "default": 0.5,
+              "title": "Similarity Threshold"
+            },
+            "description": "類似度の閾値（0.0-1.0）"
+          },
+          {
+            "name": "embedding_method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "埋め込み生成方法（hash, huggingface, openai）",
+              "default": "huggingface",
+              "title": "Embedding Method"
+            },
+            "description": "埋め込み生成方法（hash, huggingface, openai）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/neo4j/vector/title-similarity": {
+      "get": {
+        "tags": [
+          "neo4j-fast"
+        ],
+        "summary": "Vector Title Similarity",
+        "description": "クエリを埋め込み化し、Work.embedding に対するタイトル類似上位を返す（title と similarity のみ）。",
+        "operationId": "vector_title_similarity_api_v1_neo4j_vector_title_similarity_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "検索クエリ（タイトルなど）",
+              "title": "Q"
+            },
+            "description": "検索クエリ（タイトルなど）"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "最大取得件数",
+              "default": 5,
+              "title": "Limit"
+            },
+            "description": "最大取得件数"
+          },
+          {
+            "name": "similarity_threshold",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "description": "類似度の閾値（0.0-1.0）",
+              "default": 0.8,
+              "title": "Similarity Threshold"
+            },
+            "description": "類似度の閾値（0.0-1.0）"
+          },
+          {
+            "name": "embedding_method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "埋め込み生成方法（hash, huggingface, openai）",
+              "default": "huggingface",
+              "title": "Embedding Method"
+            },
+            "description": "埋め込み生成方法（hash, huggingface, openai）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TitleSimilarityResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/covers/work/{work_id}": {
+      "get": {
+        "tags": [
+          "cover-images"
+        ],
+        "summary": "Get Work Cover",
+        "description": "作品の書影URLを取得",
+        "operationId": "get_work_cover_api_v1_covers_work__work_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "work_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Work Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/covers/bulk": {
+      "post": {
+        "tags": [
+          "cover-images"
+        ],
+        "summary": "Get Bulk Covers",
+        "description": "複数作品の書影URLを一括取得",
+        "operationId": "get_bulk_covers_api_v1_covers_bulk_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkCoverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkCoverResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/covers/work/{work_id}/update": {
+      "post": {
+        "tags": [
+          "cover-images"
+        ],
+        "summary": "Update Work Cover",
+        "description": "作品の書影URLを更新",
+        "operationId": "update_work_cover_api_v1_covers_work__work_id__update_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "work_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Work Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/covers/bulk-update": {
+      "post": {
+        "tags": [
+          "cover-images"
+        ],
+        "summary": "Bulk Update Covers",
+        "description": "ISBNを持つ作品の書影を一括更新",
+        "operationId": "bulk_update_covers_api_v1_covers_bulk_update_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "更新する作品数の上限",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "更新する作品数の上限"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/covers/cache/stats": {
+      "get": {
+        "tags": [
+          "cover-images"
+        ],
+        "summary": "Get Cache Stats",
+        "description": "キャッシュの統計情報を取得",
+        "operationId": "get_cache_stats_api_v1_covers_cache_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/covers/cache/cleanup": {
+      "post": {
+        "tags": [
+          "cover-images"
+        ],
+        "summary": "Cleanup Cache",
+        "description": "期限切れのキャッシュエントリをクリーンアップ",
+        "operationId": "cleanup_cache_api_v1_covers_cache_cleanup_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/covers/cache/clear": {
+      "delete": {
+        "tags": [
+          "cover-images"
+        ],
+        "summary": "Clear Cache",
+        "description": "全てのキャッシュをクリア",
+        "operationId": "clear_cache_api_v1_covers_cache_clear_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/covers/cache/invalidate/{isbn}": {
+      "delete": {
+        "tags": [
+          "cover-images"
+        ],
+        "summary": "Invalidate Cache Entry",
+        "description": "特定のISBNのキャッシュエントリを無効化",
+        "operationId": "invalidate_cache_entry_api_v1_covers_cache_invalidate__isbn__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "isbn",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Isbn"
+            }
+          },
+          {
+            "name": "title",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "作品タイトル（オプション）",
+              "title": "Title"
+            },
+            "description": "作品タイトル（オプション）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/images/fetch": {
+      "post": {
+        "tags": [
+          "image-fetch"
+        ],
+        "summary": "Fetch Single Image",
+        "description": "Fetch a single image from URL",
+        "operationId": "fetch_single_image_api_v1_images_fetch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageFetchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageFetchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/images/fetch-bulk": {
+      "post": {
+        "tags": [
+          "image-fetch"
+        ],
+        "summary": "Fetch Bulk Images",
+        "description": "Fetch multiple images concurrently from URLs",
+        "operationId": "fetch_bulk_images_api_v1_images_fetch_bulk_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkImageFetchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkImageFetchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/text-generation/generate": {
+      "post": {
+        "tags": [
+          "Text Generation"
+        ],
+        "summary": "テキスト生成",
+        "description": "OpenAI APIを使用してテキストを生成します。streaming=True でストリーミング、False で一括返却",
+        "operationId": "generate_text_text_generation_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TextGenerationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Root",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health Check",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/protected": {
+      "get": {
+        "summary": "Protected Endpoint",
+        "operationId": "protected_endpoint_protected_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AddEmbeddingRequest": {
+        "properties": {
+          "work_id": {
+            "type": "string",
+            "title": "Work Id"
+          },
+          "embedding": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Embedding"
+          }
+        },
+        "type": "object",
+        "required": [
+          "work_id",
+          "embedding"
+        ],
+        "title": "AddEmbeddingRequest"
+      },
+      "AuthorResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "birth_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Birth Date"
+          },
+          "biography": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Biography"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "AuthorResponse"
+      },
+      "BulkCoverRequest": {
+        "properties": {
+          "work_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Work Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "work_ids"
+        ],
+        "title": "BulkCoverRequest"
+      },
+      "BulkCoverResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/CoverResponse"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "total_processed": {
+            "type": "integer",
+            "title": "Total Processed"
+          },
+          "success_count": {
+            "type": "integer",
+            "title": "Success Count"
+          },
+          "error_count": {
+            "type": "integer",
+            "title": "Error Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results",
+          "total_processed",
+          "success_count",
+          "error_count"
+        ],
+        "title": "BulkCoverResponse"
+      },
+      "BulkImageFetchRequest": {
+        "properties": {
+          "requests": {
+            "items": {
+              "$ref": "#/components/schemas/ImageFetchRequest"
+            },
+            "type": "array",
+            "title": "Requests"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requests"
+        ],
+        "title": "BulkImageFetchRequest"
+      },
+      "BulkImageFetchResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ImageFetchResponse"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "total_processed": {
+            "type": "integer",
+            "title": "Total Processed"
+          },
+          "success_count": {
+            "type": "integer",
+            "title": "Success Count"
+          },
+          "error_count": {
+            "type": "integer",
+            "title": "Error Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results",
+          "total_processed",
+          "success_count",
+          "error_count"
+        ],
+        "title": "BulkImageFetchResponse"
+      },
+      "CoverResponse": {
+        "properties": {
+          "work_id": {
+            "type": "string",
+            "title": "Work Id"
+          },
+          "cover_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Url"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "has_real_cover": {
+            "type": "boolean",
+            "title": "Has Real Cover"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "work_id",
+          "source",
+          "has_real_cover"
+        ],
+        "title": "CoverResponse"
+      },
+      "EdgeData": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "properties": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Properties",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "target",
+          "type"
+        ],
+        "title": "EdgeData"
+      },
+      "GraphResponse": {
+        "properties": {
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/NodeData"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/EdgeData"
+            },
+            "type": "array",
+            "title": "Edges"
+          },
+          "total_nodes": {
+            "type": "integer",
+            "title": "Total Nodes"
+          },
+          "total_edges": {
+            "type": "integer",
+            "title": "Total Edges"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nodes",
+          "edges",
+          "total_nodes",
+          "total_edges"
+        ],
+        "title": "GraphResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ImageFetchRequest": {
+        "properties": {
+          "work_id": {
+            "type": "string",
+            "title": "Work Id"
+          },
+          "cover_url": {
+            "type": "string",
+            "title": "Cover Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "work_id",
+          "cover_url"
+        ],
+        "title": "ImageFetchRequest"
+      },
+      "ImageFetchResponse": {
+        "properties": {
+          "work_id": {
+            "type": "string",
+            "title": "Work Id"
+          },
+          "image_data": {
+            "type": "string",
+            "title": "Image Data"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type"
+          },
+          "file_size": {
+            "type": "integer",
+            "title": "File Size"
+          },
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "work_id",
+          "image_data",
+          "content_type",
+          "file_size",
+          "success"
+        ],
+        "title": "ImageFetchResponse"
+      },
+      "MagazineResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "publisher": {
+            "type": "string",
+            "title": "Publisher"
+          },
+          "established_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Established Date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "publisher"
+        ],
+        "title": "MagazineResponse"
+      },
+      "NodeData": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "properties": {
+            "type": "object",
+            "title": "Properties"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "type",
+          "properties"
+        ],
+        "title": "NodeData"
+      },
+      "SearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "depth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depth",
+            "default": 2
+          },
+          "node_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Types"
+          },
+          "edge_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edge Types"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "SearchRequest"
+      },
+      "SynopsisVectorSearchRequest": {
+        "properties": {
+          "work_id": {
+            "type": "string",
+            "title": "Work Id"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit",
+            "default": 10
+          }
+        },
+        "type": "object",
+        "required": [
+          "work_id"
+        ],
+        "title": "SynopsisVectorSearchRequest"
+      },
+      "SynopsisVectorSearchResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SynopsisVectorSearchResponseItem"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results",
+          "total"
+        ],
+        "title": "SynopsisVectorSearchResponse"
+      },
+      "SynopsisVectorSearchResponseItem": {
+        "properties": {
+          "work_id": {
+            "type": "string",
+            "title": "Work Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "synopsis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Synopsis"
+          },
+          "similarity_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Similarity Score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "work_id"
+        ],
+        "title": "SynopsisVectorSearchResponseItem"
+      },
+      "TextGenerationRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Text",
+            "description": "生成の元となるテキスト"
+          },
+          "max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 4000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tokens",
+            "description": "最大トークン数",
+            "default": 1000
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 2.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature",
+            "description": "温度パラメータ",
+            "default": 0.7
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model",
+            "description": "使用するモデル",
+            "default": "gpt-4o-mini"
+          },
+          "streaming": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Streaming",
+            "description": "ストリーミングで返す場合は True。デフォルト True でストリーミング",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "TextGenerationRequest",
+        "description": "テキスト生成リクエストスキーマ"
+      },
+      "TitleSimilarityItem": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "similarity_score": {
+            "type": "number",
+            "title": "Similarity Score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "similarity_score"
+        ],
+        "title": "TitleSimilarityItem"
+      },
+      "TitleSimilarityResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/TitleSimilarityItem"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results",
+          "total"
+        ],
+        "title": "TitleSimilarityResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "VectorIndexRequest": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "property_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Property Name",
+            "default": "embedding"
+          },
+          "dimension": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dimension",
+            "default": 1536
+          },
+          "similarity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Similarity",
+            "default": "cosine"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label"
+        ],
+        "title": "VectorIndexRequest"
+      },
+      "VectorSearchRequest": {
+        "properties": {
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "embedding": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit",
+            "default": 20
+          },
+          "use_hybrid": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Use Hybrid",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "VectorSearchRequest"
+      },
+      "WorkResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "publication_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication Date"
+          },
+          "genre": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Genre"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "isbn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isbn"
+          },
+          "cover_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Image Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "WorkResponse"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    }
+  }
+}

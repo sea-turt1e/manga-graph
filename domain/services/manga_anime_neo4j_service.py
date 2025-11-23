@@ -63,31 +63,32 @@ class MangaAnimeNeo4jService:
     # ------------------------------------------------------------------
     @staticmethod
     def _fetch_graph_tx(tx, query: Optional[str], limit: int):
-        cypher = """
-        MATCH (w:Work)
-        WHERE $query IS NULL
-           OR toLower(coalesce(w.title_name, w.title, '')) CONTAINS toLower($query)
-           OR toLower(coalesce(w.english_name, '')) CONTAINS toLower($query)
+          cypher = """
+          MATCH (w:Work)
+          WHERE $searchTerm IS NULL
+              OR toLower(toString(coalesce(w.title_name, w.title, ''))) CONTAINS toLower($searchTerm)
+              OR toLower(toString(coalesce(w.english_name, ''))) CONTAINS toLower($searchTerm)
         WITH w
         ORDER BY coalesce(toInteger(w.members), 0) DESC, toInteger(w.id) ASC
-        LIMIT $limit
+          LIMIT $limitCount
         OPTIONAL MATCH (w)-[r]-(n)
         RETURN collect(DISTINCT {id: elementId(w), labels: labels(w), properties: properties(w)}) AS work_nodes,
                collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {id: elementId(n), labels: labels(n), properties: properties(n)} END) AS neighbor_nodes,
                collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)} END) AS relationships
         """
-        return tx.run(cypher, query=query, limit=limit).single()
+          params = {"searchTerm": query, "limitCount": limit}
+          return tx.run(cypher, parameters=params).single()
 
     @staticmethod
     def _fetch_work_subgraph_tx(tx, work_id: str):
-        cypher = """
-        MATCH (w:Work {id: $work_id})
+     cypher = """
+     MATCH (w:Work {id: $work_id})
         OPTIONAL MATCH (w)-[r]-(n)
         RETURN collect(DISTINCT {id: elementId(w), labels: labels(w), properties: properties(w)}) AS work_nodes,
                collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {id: elementId(n), labels: labels(n), properties: properties(n)} END) AS neighbor_nodes,
                collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)} END) AS relationships
         """
-        return tx.run(cypher, work_id=work_id).single()
+     return tx.run(cypher, parameters={"work_id": work_id}).single()
 
     # ------------------------------------------------------------------
     # Result conversion helpers

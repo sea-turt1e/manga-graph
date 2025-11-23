@@ -207,3 +207,4 @@ cache/
 !cache/.gitkeep
 
 .vscode/settings.json
+!data/myanimelist/myanimelist-scraped-data-2025-July/screenshot_myanimelist_data_MIT.png

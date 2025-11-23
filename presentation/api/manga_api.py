@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Generator, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -6,36 +6,29 @@ from domain.services import MediaArtsDataService
 from domain.services.batch_embedding_processor import BatchEmbeddingProcessor
 from domain.services.cover_cache_service import get_cache_service
 from domain.services.cover_image_service import get_cover_service
-from domain.services.image_fetch_service import ImageFetchService, get_image_fetch_service
+from domain.services.image_fetch_service import (ImageFetchService,
+                                                 get_image_fetch_service)
+from domain.services.manga_anime_neo4j_service import MangaAnimeNeo4jService
 from domain.services.neo4j_media_arts_service import Neo4jMediaArtsService
 from domain.use_cases import SearchMangaUseCase
 from infrastructure.database import Neo4jMangaRepository
-from presentation.schemas import (
-    AddEmbeddingRequest,
-    AuthorResponse,
-    BulkCoverRequest,
-    BulkCoverResponse,
-    BulkImageFetchRequest,
-    BulkImageFetchResponse,
-    CoverResponse,
-    GraphResponse,
-    ImageFetchRequest,
-    ImageFetchResponse,
-    MagazineResponse,
-    SearchRequest,
-    SynopsisVectorSearchRequest,
-    SynopsisVectorSearchResponse,
-    SynopsisVectorSearchResponseItem,
-    TitleSimilarityItem,
-    TitleSimilarityResponse,
-    VectorIndexRequest,
-    VectorSearchRequest,
-    WorkResponse,
-)
+from presentation.schemas import (AddEmbeddingRequest, AuthorResponse,
+                                  BulkCoverRequest, BulkCoverResponse,
+                                  BulkImageFetchRequest,
+                                  BulkImageFetchResponse, CoverResponse,
+                                  GraphResponse, ImageFetchRequest,
+                                  ImageFetchResponse, MagazineResponse,
+                                  SearchRequest, SynopsisVectorSearchRequest,
+                                  SynopsisVectorSearchResponse,
+                                  SynopsisVectorSearchResponseItem,
+                                  TitleSimilarityItem, TitleSimilarityResponse,
+                                  VectorIndexRequest, VectorSearchRequest,
+                                  WorkResponse)
 
 router = APIRouter(prefix="/api/v1", tags=["manga"])
 media_arts_router = APIRouter(prefix="/api/v1/media-arts", tags=["media-arts"])
 neo4j_router = APIRouter(prefix="/api/v1/neo4j", tags=["neo4j-fast"])
+manga_anime_router = APIRouter(prefix="/api/v1/manga-anime-neo4j", tags=["manga-anime-neo4j"])
 # BatchEmbeddingProcessorを使って埋め込みを生成
 
 
@@ -68,6 +61,15 @@ def get_media_arts_service():
 def get_neo4j_media_arts_service():
     """Dependency to get Neo4j media arts data service"""
     return Neo4jMediaArtsService()
+
+
+def get_manga_anime_service() -> Generator[MangaAnimeNeo4jService, None, None]:
+    """Dependency to get manga_anime_list Neo4j service instance."""
+    service = MangaAnimeNeo4jService()
+    try:
+        yield service
+    finally:
+        service.close()
 
 
 def get_cover_image_service():
@@ -361,6 +363,55 @@ async def get_magazine_relationships_media_arts(
             total_edges=len(graph_data["edges"]),
         )
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Manga Anime Neo4j endpoints
+@manga_anime_router.get("/graph", response_model=GraphResponse)
+async def get_manga_anime_graph(
+    q: Optional[str] = Query(None, description="検索キーワード（部分一致）"),
+    limit: int = Query(50, description="取得するWork数の上限", ge=1, le=500),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Retrieve a slice of the manga_anime_list graph for visualization."""
+
+    try:
+        graph_data = service.fetch_graph(query=q, limit=limit)
+        return GraphResponse(
+            nodes=graph_data["nodes"],
+            edges=graph_data["edges"],
+            total_nodes=len(graph_data["nodes"]),
+            total_edges=len(graph_data["edges"]),
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@manga_anime_router.get("/work/{work_id}", response_model=GraphResponse)
+async def get_manga_anime_work_subgraph(
+    work_id: str,
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Fetch a focused subgraph for a specific work ID."""
+
+    try:
+        graph_data = service.fetch_work_subgraph(work_id=work_id)
+        if not graph_data["nodes"]:
+            raise HTTPException(status_code=404, detail="Work not found in manga_anime_list database")
+
+        return GraphResponse(
+            nodes=graph_data["nodes"],
+            edges=graph_data["edges"],
+            total_nodes=len(graph_data["nodes"]),
+            total_edges=len(graph_data["edges"]),
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

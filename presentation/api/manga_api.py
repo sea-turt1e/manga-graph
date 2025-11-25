@@ -368,7 +368,7 @@ async def get_magazine_relationships_media_arts(
 
 
 # Manga Anime Neo4j endpoints
-@manga_anime_router.get("/graph", response_model=GraphResponse)
+@manga_anime_router.get("/graph/english", response_model=GraphResponse)
 async def get_manga_anime_graph(
     q: Optional[str] = Query(None, description="検索キーワード（部分一致）"),
     limit: int = Query(50, description="取得するWork数の上限", ge=1, le=500),
@@ -378,6 +378,30 @@ async def get_manga_anime_graph(
 
     try:
         graph_data = service.fetch_graph(query=q, limit=limit)
+        return GraphResponse(
+            nodes=graph_data["nodes"],
+            edges=graph_data["edges"],
+            total_nodes=len(graph_data["nodes"]),
+            total_edges=len(graph_data["edges"]),
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@manga_anime_router.get("/graph/japanese", response_model=GraphResponse)
+async def get_manga_anime_graph_japanese(
+    q: Optional[str] = Query(None, description='検索キーワード（japanese_nameによる部分一致）'),
+    limit: int = Query(50, description="取得するWork数の上限", ge=1, le=500),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Retrieve a slice of the manga_anime_list graph by japanese_name for visualization."""
+
+    try:
+        graph_data = service.fetch_graph_by_japanese(query=q, limit=limit)
         return GraphResponse(
             nodes=graph_data["nodes"],
             edges=graph_data["edges"],

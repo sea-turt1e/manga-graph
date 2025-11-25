@@ -47,6 +47,13 @@ class MangaAnimeNeo4jService:
 
         return self._convert_to_graph(record)
 
+    def fetch_graph_by_japanese(self, query: Optional[str], limit: int = 50) -> Dict[str, List[Dict[str, Any]]]:
+        """Fetch a graph slice of works matching japanese_name plus their adjacent nodes."""
+        with self.driver.session() as session:
+            record = session.read_transaction(self._fetch_graph_tx_japanese, query, limit)
+
+        return self._convert_to_graph(record)
+
     def fetch_work_subgraph(self, work_id: str) -> Dict[str, List[Dict[str, Any]]]:
         """Fetch a focused subgraph centered on a specific work."""
         with self.driver.session() as session:
@@ -78,6 +85,23 @@ class MangaAnimeNeo4jService:
         """
           params = {"searchTerm": query, "limitCount": limit}
           return tx.run(cypher, parameters=params).single()
+
+    @staticmethod
+    def _fetch_graph_tx_japanese(tx, query: Optional[str], limit: int):
+        cypher = """
+        MATCH (w:Work)
+        WHERE $searchTerm IS NULL
+            OR toLower(toString(coalesce(w.japanese_name, ''))) CONTAINS toLower(toString($searchTerm))
+        WITH w
+        ORDER BY coalesce(toInteger(w.members), 0) DESC, toInteger(w.id) ASC
+        LIMIT $limitCount
+        OPTIONAL MATCH (w)-[r]-(n)
+        RETURN collect(DISTINCT {id: elementId(w), labels: labels(w), properties: properties(w)}) AS work_nodes,
+               collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {id: elementId(n), labels: labels(n), properties: properties(n)} END) AS neighbor_nodes,
+               collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)} END) AS relationships
+        """
+        params = {"searchTerm": query, "limitCount": limit}
+        return tx.run(cypher, parameters=params).single()
 
     @staticmethod
     def _fetch_work_subgraph_tx(tx, work_id: str):

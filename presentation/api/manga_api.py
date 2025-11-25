@@ -1,4 +1,4 @@
-from typing import Generator, List, Optional
+from typing import Dict, Generator, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -85,6 +85,34 @@ def get_cover_cache_service():
 def get_image_fetch_service_dep():
     """Dependency to get image fetch service"""
     return get_image_fetch_service()
+
+
+def _graph_response_from_data(graph_data: Dict[str, List[Dict]]) -> GraphResponse:
+    return GraphResponse(
+        nodes=graph_data["nodes"],
+        edges=graph_data["edges"],
+        total_nodes=len(graph_data["nodes"]),
+        total_edges=len(graph_data["edges"]),
+    )
+
+
+def _handle_manga_anime_graph(
+    service: MangaAnimeNeo4jService,
+    *,
+    query: Optional[str],
+    limit: int,
+    language: str,
+    mode: str,
+) -> GraphResponse:
+    try:
+        graph_data = service.fetch_graph(query=query, limit=limit, language=language, mode=mode)
+        return _graph_response_from_data(graph_data)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/search", response_model=GraphResponse)
@@ -368,52 +396,45 @@ async def get_magazine_relationships_media_arts(
 
 
 # Manga Anime Neo4j endpoints
-@manga_anime_router.get("/graph/english", response_model=GraphResponse)
+@manga_anime_router.get("/graph", response_model=GraphResponse)
 async def get_manga_anime_graph(
-    q: Optional[str] = Query(None, description="検索キーワード（部分一致）"),
+    q: Optional[str] = Query(None, description="検索キーワード"),
+    lang: str = Query("english", regex="^(english|japanese)$", description="検索対象のタイトル言語"),
+    mode: str = Query(
+        "simple",
+        regex="^(simple|fulltext|ranked)$",
+        description="simple:部分一致 / fulltext:Lucene fuzzy / ranked:再ランク",
+    ),
     limit: int = Query(50, description="取得するWork数の上限", ge=1, le=500),
     service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
 ):
-    """Retrieve a slice of the manga_anime_list graph for visualization."""
+    """Retrieve a slice of the manga_anime_list graph with selectable search mode and language."""
 
-    try:
-        graph_data = service.fetch_graph(query=q, limit=limit)
-        return GraphResponse(
-            nodes=graph_data["nodes"],
-            edges=graph_data["edges"],
-            total_nodes=len(graph_data["nodes"]),
-            total_edges=len(graph_data["edges"]),
-        )
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return _handle_manga_anime_graph(service, query=q, limit=limit, language=lang, mode=mode)
 
 
-@manga_anime_router.get("/graph/japanese", response_model=GraphResponse)
+@manga_anime_router.get("/graph/english", response_model=GraphResponse, include_in_schema=False)
+async def get_manga_anime_graph_english(
+    q: Optional[str] = Query(None, description="検索キーワード（部分一致）"),
+    mode: str = Query("simple", regex="^(simple|fulltext|ranked)$"),
+    limit: int = Query(50, description="取得するWork数の上限", ge=1, le=500),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Backward-compatible endpoint for English title search."""
+
+    return _handle_manga_anime_graph(service, query=q, limit=limit, language="english", mode=mode)
+
+
+@manga_anime_router.get("/graph/japanese", response_model=GraphResponse, include_in_schema=False)
 async def get_manga_anime_graph_japanese(
     q: Optional[str] = Query(None, description='検索キーワード（japanese_nameによる部分一致）'),
+    mode: str = Query("simple", regex="^(simple|fulltext|ranked)$"),
     limit: int = Query(50, description="取得するWork数の上限", ge=1, le=500),
     service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
 ):
-    """Retrieve a slice of the manga_anime_list graph by japanese_name for visualization."""
+    """Backward-compatible endpoint for Japanese title search."""
 
-    try:
-        graph_data = service.fetch_graph_by_japanese(query=q, limit=limit)
-        return GraphResponse(
-            nodes=graph_data["nodes"],
-            edges=graph_data["edges"],
-            total_nodes=len(graph_data["nodes"]),
-            total_edges=len(graph_data["edges"]),
-        )
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return _handle_manga_anime_graph(service, query=q, limit=limit, language="japanese", mode=mode)
 
 
 @manga_anime_router.get("/work/{work_id}", response_model=GraphResponse)

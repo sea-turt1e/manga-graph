@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from neo4j import Driver, GraphDatabase
+from neo4j.exceptions import Neo4jError
 
 logger = logging.getLogger(__name__)
+
+
+SearchMode = Literal["simple", "fulltext", "ranked"]
+SearchLanguage = Literal["english", "japanese"]
 
 
 class MangaAnimeNeo4jService:
@@ -34,25 +39,58 @@ class MangaAnimeNeo4jService:
                 "MangaAnimeNeo4jService requires Neo4j connection settings. "
                 "Set MANGA_ANIME_NEO4J_* or reuse the default NEO4J_* variables."
             )
-
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.fulltext_index = os.getenv("MANGA_ANIME_FULLTEXT_INDEX", "work_titles_fulltext")
+        self.fulltext_candidate_limit = int(os.getenv("MANGA_ANIME_FULLTEXT_CANDIDATE_LIMIT", "200"))
+        self.rank_threshold = float(os.getenv("MANGA_ANIME_RANK_THRESHOLD", "0.45"))
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def fetch_graph(self, query: Optional[str], limit: int = 50) -> Dict[str, List[Dict[str, Any]]]:
-        """Fetch a graph slice of works plus their adjacent nodes."""
+    def fetch_graph(
+        self,
+        query: Optional[str],
+        limit: int = 50,
+        *,
+        language: SearchLanguage = "english",
+        mode: SearchMode = "simple",
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Fetch a graph slice of works plus their adjacent nodes using the specified search mode."""
+
+        normalized_mode = mode if query else "simple"
         with self.driver.session() as session:
-            record = session.read_transaction(self._fetch_graph_tx, query, limit)
+            try:
+                if normalized_mode == "fulltext":
+                    record = session.read_transaction(
+                        self._fetch_graph_tx_fulltext,
+                        query,
+                        limit,
+                        language,
+                        self.fulltext_index,
+                    )
+                elif normalized_mode == "ranked":
+                    record = session.read_transaction(
+                        self._fetch_graph_tx_ranked,
+                        query,
+                        limit,
+                        language,
+                        self.fulltext_index,
+                        self.fulltext_candidate_limit,
+                        self.rank_threshold,
+                    )
+                else:
+                    record = session.read_transaction(self._fetch_graph_tx_simple, query, limit, language)
+            except Neo4jError as exc:
+                logger.warning("Falling back to simple search due to Neo4j error: %s", exc)
+                record = session.read_transaction(self._fetch_graph_tx_simple, query, limit, language)
 
         return self._convert_to_graph(record)
 
-    def fetch_graph_by_japanese(self, query: Optional[str], limit: int = 50) -> Dict[str, List[Dict[str, Any]]]:
-        """Fetch a graph slice of works matching japanese_name plus their adjacent nodes."""
-        with self.driver.session() as session:
-            record = session.read_transaction(self._fetch_graph_tx_japanese, query, limit)
-
-        return self._convert_to_graph(record)
+    def fetch_graph_by_japanese(
+        self, query: Optional[str], limit: int = 50, mode: SearchMode = "simple"
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Backward-compatible helper focused on japanese_name queries."""
+        return self.fetch_graph(query=query, limit=limit, language="japanese", mode=mode)
 
     def fetch_work_subgraph(self, work_id: str) -> Dict[str, List[Dict[str, Any]]]:
         """Fetch a focused subgraph centered on a specific work."""
@@ -69,38 +107,98 @@ class MangaAnimeNeo4jService:
     # Cypher helpers
     # ------------------------------------------------------------------
     @staticmethod
-    def _fetch_graph_tx(tx, query: Optional[str], limit: int):
-          cypher = """
-          MATCH (w:Work)
-          WHERE $searchTerm IS NULL
-              OR toLower(toString(coalesce(w.title_name, w.title, ''))) CONTAINS toLower($searchTerm)
-              OR toLower(toString(coalesce(w.english_name, ''))) CONTAINS toLower($searchTerm)
+    def _fetch_graph_tx_simple(tx, query: Optional[str], limit: int, language: SearchLanguage):
+        clauses = MangaAnimeNeo4jService._build_simple_where(language)
+        cypher = f"""
+        MATCH (w:Work)
+        WHERE $searchTerm IS NULL OR {clauses}
         WITH w
         ORDER BY coalesce(toInteger(w.members), 0) DESC, toInteger(w.id) ASC
-          LIMIT $limitCount
+        LIMIT $limitCount
         OPTIONAL MATCH (w)-[r]-(n)
-        RETURN collect(DISTINCT {id: elementId(w), labels: labels(w), properties: properties(w)}) AS work_nodes,
-               collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {id: elementId(n), labels: labels(n), properties: properties(n)} END) AS neighbor_nodes,
-               collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)} END) AS relationships
+        RETURN collect(DISTINCT {{id: elementId(w), labels: labels(w), properties: properties(w)}}) AS work_nodes,
+               collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {{id: elementId(n), labels: labels(n), properties: properties(n)}} END) AS neighbor_nodes,
+               collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {{id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)}} END) AS relationships
         """
-          params = {"searchTerm": query, "limitCount": limit}
-          return tx.run(cypher, parameters=params).single()
+        params = {"searchTerm": query, "limitCount": limit}
+        return tx.run(cypher, parameters=params).single()
 
     @staticmethod
-    def _fetch_graph_tx_japanese(tx, query: Optional[str], limit: int):
+    def _fetch_graph_tx_fulltext(
+        tx,
+        query: Optional[str],
+        limit: int,
+        language: SearchLanguage,
+        index_name: str,
+    ):
+        lucene_query = MangaAnimeNeo4jService._build_lucene_query(query)
         cypher = """
-        MATCH (w:Work)
-        WHERE $searchTerm IS NULL
-            OR toLower(toString(coalesce(w.japanese_name, ''))) CONTAINS toLower(toString($searchTerm))
-        WITH w
-        ORDER BY coalesce(toInteger(w.members), 0) DESC, toInteger(w.id) ASC
+        CALL db.index.fulltext.queryNodes($indexName, $luceneQuery)
+        YIELD node AS w, score
+        WHERE $language <> 'japanese' OR coalesce(w.japanese_name, '') <> ''
+        WITH w, score
+        ORDER BY score DESC
         LIMIT $limitCount
         OPTIONAL MATCH (w)-[r]-(n)
         RETURN collect(DISTINCT {id: elementId(w), labels: labels(w), properties: properties(w)}) AS work_nodes,
                collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {id: elementId(n), labels: labels(n), properties: properties(n)} END) AS neighbor_nodes,
                collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)} END) AS relationships
         """
-        params = {"searchTerm": query, "limitCount": limit}
+        params = {
+            "indexName": index_name,
+            "luceneQuery": lucene_query,
+            "limitCount": limit,
+            "language": language,
+        }
+        return tx.run(cypher, parameters=params).single()
+
+    @staticmethod
+    def _fetch_graph_tx_ranked(
+        tx,
+        query: Optional[str],
+        limit: int,
+        language: SearchLanguage,
+        index_name: str,
+        candidate_limit: int,
+        rank_threshold: float,
+    ):
+        lucene_query = MangaAnimeNeo4jService._build_lucene_query(query)
+        cypher = """
+        CALL db.index.fulltext.queryNodes($indexName, $luceneQuery)
+        YIELD node AS w, score
+        WHERE $language <> 'japanese' OR coalesce(w.japanese_name, '') <> ''
+        WITH w, score
+        ORDER BY score DESC
+        LIMIT $candidateLimit
+        WITH w, score,
+             apoc.text.levenshteinSimilarity(
+                 toLower(coalesce(
+                     CASE WHEN $language = 'japanese' THEN toString(w.japanese_name)
+                          ELSE toString(coalesce(w.title_name, w.title, w.english_name))
+                     END,
+                     ''
+                 )),
+                 toLower($rawQuery)
+             ) AS levSim
+        WITH w, score, levSim,
+             (0.5 * score + 0.5 * coalesce(levSim, 0.0)) AS finalScore
+        WHERE finalScore >= $rankThreshold
+        ORDER BY finalScore DESC
+        LIMIT $limitCount
+        OPTIONAL MATCH (w)-[r]-(n)
+        RETURN collect(DISTINCT {id: elementId(w), labels: labels(w), properties: properties(w)}) AS work_nodes,
+               collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {id: elementId(n), labels: labels(n), properties: properties(n)} END) AS neighbor_nodes,
+               collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)} END) AS relationships
+        """
+        params = {
+            "indexName": index_name,
+            "luceneQuery": lucene_query,
+            "candidateLimit": candidate_limit,
+            "rankThreshold": rank_threshold,
+            "limitCount": limit,
+            "language": language,
+            "rawQuery": query or "",
+        }
         return tx.run(cypher, parameters=params).single()
 
     @staticmethod
@@ -192,3 +290,33 @@ class MangaAnimeNeo4jService:
         if node_type == "publisher":
             return props.get("name") or "Publisher"
         return props.get("name") or props.get("title") or "Node"
+
+    # ------------------------------------------------------------------
+    # Query helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _build_simple_where(language: SearchLanguage) -> str:
+        if language == "japanese":
+            clauses = [
+                "toLower(toString(coalesce(w.japanese_name, ''))) CONTAINS toLower($searchTerm)",
+                "toLower(toString(coalesce(w.title_name, ''))) CONTAINS toLower($searchTerm)",
+                "toLower(toString(coalesce(w.title, ''))) CONTAINS toLower($searchTerm)",
+            ]
+        else:
+            clauses = [
+                "toLower(toString(coalesce(w.title_name, w.title, ''))) CONTAINS toLower($searchTerm)",
+                "toLower(toString(coalesce(w.english_name, ''))) CONTAINS toLower($searchTerm)",
+            ]
+        return " OR ".join(clauses)
+
+    @staticmethod
+    def _build_lucene_query(term: Optional[str]) -> str:
+        if not term:
+            return "*"
+        escaped = MangaAnimeNeo4jService._escape_lucene_specials(term.strip())
+        return f"{escaped}~1"
+
+    @staticmethod
+    def _escape_lucene_specials(value: str) -> str:
+        specials = set(r"+-&|!(){}[]^\"~*?:\\/")
+        return "".join(f"\\{ch}" if ch in specials else ch for ch in value)

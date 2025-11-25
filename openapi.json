@@ -1219,6 +1219,151 @@
         }
       }
     },
+    "/api/v1/manga-anime-neo4j/graph": {
+      "get": {
+        "tags": [
+          "manga-anime-neo4j"
+        ],
+        "summary": "Get Manga Anime Graph",
+        "description": "Retrieve a slice of the manga_anime_list graph with selectable search mode and language.",
+        "operationId": "get_manga_anime_graph_api_v1_manga_anime_neo4j_graph_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "検索キーワード",
+              "title": "Q"
+            },
+            "description": "検索キーワード"
+          },
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(english|japanese)$",
+              "description": "検索対象のタイトル言語",
+              "default": "english",
+              "title": "Lang"
+            },
+            "description": "検索対象のタイトル言語"
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(simple|fulltext|ranked)$",
+              "description": "simple:部分一致 / fulltext:Lucene fuzzy / ranked:再ランク",
+              "default": "simple",
+              "title": "Mode"
+            },
+            "description": "simple:部分一致 / fulltext:Lucene fuzzy / ranked:再ランク"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "取得するWork数の上限",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "取得するWork数の上限"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/manga-anime-neo4j/work/{work_id}": {
+      "get": {
+        "tags": [
+          "manga-anime-neo4j"
+        ],
+        "summary": "Get Manga Anime Work Subgraph",
+        "description": "Fetch a focused subgraph for a specific work ID.",
+        "operationId": "get_manga_anime_work_subgraph_api_v1_manga_anime_neo4j_work__work_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "work_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Work Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/covers/work/{work_id}": {
       "get": {
         "tags": [

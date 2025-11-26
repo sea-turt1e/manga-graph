@@ -29,3 +29,8 @@ CREATE FULLTEXT INDEX work_titles_fulltext
 FOR (w:Work)
 ON EACH [w.title_name, w.title, w.english_name, w.japanese_name, w.aliases];
 ```
+
+## embeddingを追加する
+```bash
+uv run python scripts/embeddings/generate_jina_embeddings.py --batch-size 128
+```

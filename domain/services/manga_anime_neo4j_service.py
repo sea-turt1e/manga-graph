@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 SearchMode = Literal["simple", "fulltext", "ranked"]
 SearchLanguage = Literal["english", "japanese"]
+VectorProperty = Literal["embedding_title_en", "embedding_title_ja", "embedding_description"]
 
 
 class MangaAnimeNeo4jService:
@@ -96,6 +97,28 @@ class MangaAnimeNeo4jService:
         """Fetch a focused subgraph centered on a specific work."""
         with self.driver.session() as session:
             record = session.read_transaction(self._fetch_work_subgraph_tx, work_id)
+
+        return self._convert_to_graph(record)
+
+    def fetch_similar_by_embedding(
+        self,
+        query_embedding: List[float],
+        *,
+        property_name: VectorProperty,
+        limit: int = 20,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Run cosine similarity search against a stored embedding property."""
+
+        if property_name not in {"embedding_title_en", "embedding_title_ja", "embedding_description"}:
+            raise ValueError("Unsupported embedding property")
+
+        with self.driver.session() as session:
+            record = session.read_transaction(
+                self._vector_similarity_tx,
+                property_name,
+                query_embedding,
+                limit,
+            )
 
         return self._convert_to_graph(record)
 
@@ -211,6 +234,23 @@ class MangaAnimeNeo4jService:
                collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)} END) AS relationships
         """
      return tx.run(cypher, parameters={"work_id": work_id}).single()
+
+    @staticmethod
+    def _vector_similarity_tx(tx, property_name: str, query_embedding: List[float], limit: int):
+        cypher = f"""
+        MATCH (w:Work)
+        WHERE w.{property_name} IS NOT NULL
+        WITH w, gds.similarity.cosine($queryEmbedding, w.{property_name}) AS score
+        WHERE score IS NOT NULL
+        ORDER BY score DESC
+        LIMIT $limitCount
+        OPTIONAL MATCH (w)-[r]-(n)
+        RETURN collect(DISTINCT {{id: elementId(w), labels: labels(w), properties: properties(w) + {{similarity_score: score}}}}) AS work_nodes,
+               collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {{id: elementId(n), labels: labels(n), properties: properties(n)}} END) AS neighbor_nodes,
+               collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {{id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)}} END) AS relationships
+        """
+        params = {"queryEmbedding": query_embedding, "limitCount": limit}
+        return tx.run(cypher, parameters=params).single()
 
     # ------------------------------------------------------------------
     # Result conversion helpers

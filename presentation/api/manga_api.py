@@ -1,3 +1,4 @@
+import os
 from typing import Dict, Generator, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,6 +9,8 @@ from domain.services.cover_cache_service import get_cache_service
 from domain.services.cover_image_service import get_cover_service
 from domain.services.image_fetch_service import (ImageFetchService,
                                                  get_image_fetch_service)
+from domain.services.jina_embedding_client import (JinaEmbeddingClient,
+                                                   get_jina_embedding_client)
 from domain.services.manga_anime_neo4j_service import MangaAnimeNeo4jService
 from domain.services.neo4j_media_arts_service import Neo4jMediaArtsService
 from domain.use_cases import SearchMangaUseCase
@@ -94,6 +97,35 @@ def _graph_response_from_data(graph_data: Dict[str, List[Dict]]) -> GraphRespons
         total_nodes=len(graph_data["nodes"]),
         total_edges=len(graph_data["edges"]),
     )
+
+
+EMBED_TITLE_DIMS = int(os.getenv("JINA_TITLE_EMBED_DIM", "256"))
+EMBED_DESCRIPTION_DIMS = int(os.getenv("JINA_DESCRIPTION_EMBED_DIM", "1024"))
+
+
+def _get_query_embedding(query: str, dims: int) -> List[float]:
+    client = get_jina_embedding_client()
+    vector = client.encode(query)
+    if vector is None:
+        raise HTTPException(status_code=400, detail="Query text is required for embedding search")
+    return JinaEmbeddingClient.truncate(vector, dims)
+
+
+def _handle_vector_search(
+    *,
+    query: str,
+    dims: int,
+    property_name: str,
+    limit: int,
+    service: MangaAnimeNeo4jService,
+) -> GraphResponse:
+    embedding = _get_query_embedding(query, dims)
+    graph_data = service.fetch_similar_by_embedding(
+        query_embedding=embedding,
+        property_name=property_name,  # type: ignore[arg-type]
+        limit=limit,
+    )
+    return _graph_response_from_data(graph_data)
 
 
 def _handle_manga_anime_graph(
@@ -435,6 +467,38 @@ async def get_manga_anime_graph_japanese(
     """Backward-compatible endpoint for Japanese title search."""
 
     return _handle_manga_anime_graph(service, query=q, limit=limit, language="japanese", mode=mode)
+
+
+@manga_anime_router.get("/vector/title", response_model=GraphResponse)
+async def get_manga_anime_title_vector(
+    q: str = Query(..., description="タイトルで類似検索するクエリテキスト"),
+    lang: str = Query("english", regex="^(english|japanese)$", description="使用するタイトル埋め込み"),
+    limit: int = Query(20, description="取得件数", ge=1, le=200),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    property_name = "embedding_title_ja" if lang == "japanese" else "embedding_title_en"
+    return _handle_vector_search(
+        query=q,
+        dims=EMBED_TITLE_DIMS,
+        property_name=property_name,
+        limit=limit,
+        service=service,
+    )
+
+
+@manga_anime_router.get("/vector/description", response_model=GraphResponse)
+async def get_manga_anime_description_vector(
+    q: str = Query(..., description="作品説明で類似検索するクエリテキスト"),
+    limit: int = Query(20, description="取得件数", ge=1, le=200),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    return _handle_vector_search(
+        query=q,
+        dims=EMBED_DESCRIPTION_DIMS,
+        property_name="embedding_description",
+        limit=limit,
+        service=service,
+    )
 
 
 @manga_anime_router.get("/work/{work_id}", response_model=GraphResponse)

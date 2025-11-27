@@ -135,12 +135,14 @@ def _handle_vector_search(
     property_name: str,
     limit: int,
     service: MangaAnimeNeo4jService,
+    include_hentai: bool,
 ) -> GraphResponse:
     embedding = _get_query_embedding(query, dims)
     graph_data = service.fetch_similar_by_embedding(
         query_embedding=embedding,
         property_name=property_name,  # type: ignore[arg-type]
         limit=limit,
+        include_hentai=include_hentai,
     )
     return _graph_response_from_data(graph_data)
 
@@ -152,9 +154,16 @@ def _handle_manga_anime_graph(
     limit: int,
     language: str,
     mode: str,
+    include_hentai: bool,
 ) -> GraphResponse:
     try:
-        graph_data = service.fetch_graph(query=query, limit=limit, language=language, mode=mode)
+        graph_data = service.fetch_graph(
+            query=query,
+            limit=limit,
+            language=language,
+            mode=mode,
+            include_hentai=include_hentai,
+        )
         _strip_embedding_fields(graph_data)
         return _graph_response_from_data(graph_data)
     except HTTPException:
@@ -456,11 +465,19 @@ async def get_manga_anime_graph(
         description="simple:部分一致 / fulltext:Lucene fuzzy / ranked:再ランク",
     ),
     limit: int = Query(50, description="取得するWork数の上限", ge=1, le=500),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
     service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
 ):
     """Retrieve a slice of the manga_anime_list graph with selectable search mode and language."""
 
-    return _handle_manga_anime_graph(service, query=q, limit=limit, language=lang, mode=mode)
+    return _handle_manga_anime_graph(
+        service,
+        query=q,
+        limit=limit,
+        language=lang,
+        mode=mode,
+        include_hentai=include_hentai,
+    )
 
 
 @manga_anime_router.get("/graph/english", response_model=GraphResponse, include_in_schema=False)
@@ -468,11 +485,19 @@ async def get_manga_anime_graph_english(
     q: Optional[str] = Query(None, description="検索キーワード（部分一致）"),
     mode: str = Query("simple", regex="^(simple|fulltext|ranked)$"),
     limit: int = Query(50, description="取得するWork数の上限", ge=1, le=500),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
     service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
 ):
     """Backward-compatible endpoint for English title search."""
 
-    return _handle_manga_anime_graph(service, query=q, limit=limit, language="english", mode=mode)
+    return _handle_manga_anime_graph(
+        service,
+        query=q,
+        limit=limit,
+        language="english",
+        mode=mode,
+        include_hentai=include_hentai,
+    )
 
 
 @manga_anime_router.get("/graph/japanese", response_model=GraphResponse, include_in_schema=False)
@@ -480,11 +505,19 @@ async def get_manga_anime_graph_japanese(
     q: Optional[str] = Query(None, description='検索キーワード（japanese_nameによる部分一致）'),
     mode: str = Query("simple", regex="^(simple|fulltext|ranked)$"),
     limit: int = Query(50, description="取得するWork数の上限", ge=1, le=500),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
     service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
 ):
     """Backward-compatible endpoint for Japanese title search."""
 
-    return _handle_manga_anime_graph(service, query=q, limit=limit, language="japanese", mode=mode)
+    return _handle_manga_anime_graph(
+        service,
+        query=q,
+        limit=limit,
+        language="japanese",
+        mode=mode,
+        include_hentai=include_hentai,
+    )
 
 
 @manga_anime_router.get("/vector/title", response_model=GraphResponse)
@@ -492,6 +525,7 @@ async def get_manga_anime_title_vector(
     q: str = Query(..., description="タイトルで類似検索するクエリテキスト"),
     lang: str = Query("english", regex="^(english|japanese)$", description="使用するタイトル埋め込み"),
     limit: int = Query(20, description="取得件数", ge=1, le=200),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
     service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
 ):
     property_name = "embedding_title_ja" if lang == "japanese" else "embedding_title_en"
@@ -501,6 +535,7 @@ async def get_manga_anime_title_vector(
         property_name=property_name,
         limit=limit,
         service=service,
+        include_hentai=include_hentai,
     )
 
 
@@ -508,6 +543,7 @@ async def get_manga_anime_title_vector(
 async def get_manga_anime_description_vector(
     q: str = Query(..., description="作品説明で類似検索するクエリテキスト"),
     limit: int = Query(20, description="取得件数", ge=1, le=200),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
     service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
 ):
     return _handle_vector_search(
@@ -516,18 +552,19 @@ async def get_manga_anime_description_vector(
         property_name="embedding_description",
         limit=limit,
         service=service,
+        include_hentai=include_hentai,
     )
 
 
 @manga_anime_router.get("/work/{work_id}", response_model=GraphResponse)
 async def get_manga_anime_work_subgraph(
     work_id: str,
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
     service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
 ):
     """Fetch a focused subgraph for a specific work ID."""
-
     try:
-        graph_data = service.fetch_work_subgraph(work_id=work_id)
+        graph_data = service.fetch_work_subgraph(work_id=work_id, include_hentai=include_hentai)
         if not graph_data["nodes"]:
             raise HTTPException(status_code=404, detail="Work not found in manga_anime_list database")
 
@@ -548,12 +585,15 @@ async def get_manga_anime_work_subgraph(
 async def get_author_related_works(
     author_node_id: str,
     limit: int = Query(50, description="取得する作品数の上限", ge=1, le=500),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
     service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
 ):
     """Return other works created by the specified Author node (elementId)."""
 
     try:
-        graph_data = service.fetch_author_related_works(author_node_id, limit)
+        graph_data = service.fetch_author_related_works(
+            author_node_id, limit, include_hentai=include_hentai
+        )
         _strip_embedding_fields(graph_data)
         return _graph_response_from_data(graph_data)
     except HTTPException:
@@ -566,12 +606,15 @@ async def get_author_related_works(
 async def get_magazine_related_works(
     magazine_node_id: str,
     limit: int = Query(50, description="取得する作品数の上限", ge=1, le=500),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
     service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
 ):
     """Return works that are published in the specified Magazine node (elementId)."""
 
     try:
-        graph_data = service.fetch_magazine_related_works(magazine_node_id, limit)
+        graph_data = service.fetch_magazine_related_works(
+            magazine_node_id, limit, include_hentai=include_hentai
+        )
         _strip_embedding_fields(graph_data)
         return _graph_response_from_data(graph_data)
     except HTTPException:
@@ -585,6 +628,7 @@ async def get_publisher_magazines(
     publisher_node_id: str,
     limit: int = Query(50, description="取得する雑誌数の上限", ge=1, le=500),
     exclude_magazine_id: Optional[str] = Query(None, description="除外したい雑誌ノードの elementId (任意)"),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
     service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
 ):
     """Return other magazines managed by the specified Publisher node."""
@@ -594,6 +638,7 @@ async def get_publisher_magazines(
             publisher_element_id=publisher_node_id,
             limit=limit,
             exclude_magazine_id=exclude_magazine_id,
+            include_hentai=include_hentai,
         )
         _strip_embedding_fields(graph_data)
         return _graph_response_from_data(graph_data)
@@ -616,11 +661,13 @@ async def get_magazines_work_graph(
     work_limit = request.work_limit or 50
     if work_limit < 1 or work_limit > 500:
         raise HTTPException(status_code=400, detail="work_limit must be between 1 and 500")
+    include_hentai = bool(request.include_hentai)
 
     try:
         graph_data = service.fetch_magazines_work_graph(
             magazine_element_ids=request.magazine_element_ids,
             work_limit=work_limit,
+            include_hentai=include_hentai,
         )
         _strip_embedding_fields(graph_data)
         return _graph_response_from_data(graph_data)

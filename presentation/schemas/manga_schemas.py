@@ -72,6 +72,7 @@ class GraphResponse(BaseModel):
 class MagazineWorkGraphRequest(BaseModel):
     magazine_element_ids: List[str]
     work_limit: Optional[int] = 50
+    include_hentai: Optional[bool] = False
 
 
 class AuthorResponse(BaseModel):

@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from neo4j import GraphDatabase
 
@@ -46,6 +46,7 @@ class MangaAnimeNeo4jService:
         *,
         language: SearchLanguage = "english",
         mode: SearchMode = "simple",
+        include_hentai: bool = False,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Fetch a graph slice of works plus their adjacent nodes using the specified search mode."""
 
@@ -76,20 +77,24 @@ class MangaAnimeNeo4jService:
                 logger.warning("Falling back to simple search due to Neo4j error: %s", exc)
                 record = session.read_transaction(self._fetch_graph_tx_simple, query, limit, language)
 
-        return self._convert_to_graph(record)
+        return self._convert_to_graph(record, include_hentai=include_hentai)
 
     def fetch_graph_by_japanese(
-        self, query: Optional[str], limit: int = 50, mode: SearchMode = "simple"
+        self,
+        query: Optional[str],
+        limit: int = 50,
+        mode: SearchMode = "simple",
+        include_hentai: bool = False,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Backward-compatible helper focused on japanese_name queries."""
-        return self.fetch_graph(query=query, limit=limit, language="japanese", mode=mode)
+        return self.fetch_graph(query=query, limit=limit, language="japanese", mode=mode, include_hentai=include_hentai)
 
-    def fetch_work_subgraph(self, work_id: str) -> Dict[str, List[Dict[str, Any]]]:
+    def fetch_work_subgraph(self, work_id: str, *, include_hentai: bool = False) -> Dict[str, List[Dict[str, Any]]]:
         """Fetch a focused subgraph centered on a specific work."""
         with self.driver.session() as session:
             record = session.read_transaction(self._fetch_work_subgraph_tx, work_id)
 
-        return self._convert_to_graph(record)
+        return self._convert_to_graph(record, include_hentai=include_hentai)
 
     def fetch_similar_by_embedding(
         self,
@@ -97,6 +102,7 @@ class MangaAnimeNeo4jService:
         *,
         property_name: VectorProperty,
         limit: int = 20,
+        include_hentai: bool = False,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Run cosine similarity search against a stored embedding property."""
 
@@ -111,23 +117,27 @@ class MangaAnimeNeo4jService:
                 limit,
             )
 
-        return self._convert_to_graph(record)
+        return self._convert_to_graph(record, include_hentai=include_hentai)
 
-    def fetch_author_related_works(self, author_element_id: str, limit: int = 50) -> Dict[str, List[Dict[str, Any]]]:
+    def fetch_author_related_works(
+        self, author_element_id: str, limit: int = 50, *, include_hentai: bool = False
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """Fetch works associated with a specific author node (identified by elementId)."""
 
         with self.driver.session() as session:
             record = session.read_transaction(self._fetch_author_related_works_tx, author_element_id, limit)
 
-        return self._convert_to_graph(record)
+        return self._convert_to_graph(record, include_hentai=include_hentai)
 
-    def fetch_magazine_related_works(self, magazine_element_id: str, limit: int = 50) -> Dict[str, List[Dict[str, Any]]]:
+    def fetch_magazine_related_works(
+        self, magazine_element_id: str, limit: int = 50, *, include_hentai: bool = False
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """Fetch works published in a specific magazine node (identified by elementId)."""
 
         with self.driver.session() as session:
             record = session.read_transaction(self._fetch_magazine_related_works_tx, magazine_element_id, limit)
 
-        return self._convert_to_graph(record)
+        return self._convert_to_graph(record, include_hentai=include_hentai)
 
     def fetch_publisher_magazines(
         self,
@@ -135,6 +145,7 @@ class MangaAnimeNeo4jService:
         limit: int = 50,
         *,
         exclude_magazine_id: Optional[str] = None,
+        include_hentai: bool = False,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Fetch magazines linked to a publisher (optionally excluding a source magazine)."""
 
@@ -146,13 +157,14 @@ class MangaAnimeNeo4jService:
                 exclude_magazine_id,
             )
 
-        return self._convert_to_graph(record)
+        return self._convert_to_graph(record, include_hentai=include_hentai)
 
     def fetch_magazines_work_graph(
         self,
         magazine_element_ids: List[str],
         *,
         work_limit: int = 50,
+        include_hentai: bool = False,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Fetch works and edges for the provided magazine elementIds."""
 
@@ -166,7 +178,7 @@ class MangaAnimeNeo4jService:
                 work_limit,
             )
 
-        return self._convert_to_graph(record)
+        return self._convert_to_graph(record, include_hentai=include_hentai)
 
     def close(self) -> None:
         if self.driver:
@@ -359,10 +371,10 @@ class MangaAnimeNeo4jService:
         WHERE elementId(m) IN $magazineElementIds
         WITH m
         CALL {
-            WITH m, $workLimit AS limitCount
+            WITH m
             OPTIONAL MATCH (m)<-[rel:PUBLISHED_IN]-(w:Work)
             ORDER BY toLower(toString(coalesce(w.title_name, w.english_name, w.title, w.id, '')))
-            LIMIT limitCount
+            LIMIT $workLimit
             RETURN collect(DISTINCT CASE WHEN w IS NULL THEN NULL ELSE {id: elementId(w), labels: labels(w), properties: properties(w)} END) AS works,
                    collect(DISTINCT CASE WHEN rel IS NULL THEN NULL ELSE {id: elementId(rel), source: elementId(w), target: elementId(m), type: type(rel), properties: properties(rel)} END) AS rels
         }
@@ -409,7 +421,7 @@ class MangaAnimeNeo4jService:
     # ------------------------------------------------------------------
     # Result conversion helpers
     # ------------------------------------------------------------------
-    def _convert_to_graph(self, record) -> Dict[str, List[Dict[str, Any]]]:
+    def _convert_to_graph(self, record, *, include_hentai: bool = False) -> Dict[str, List[Dict[str, Any]]]:
         if record is None:
             return {"nodes": [], "edges": []}
 
@@ -447,6 +459,9 @@ class MangaAnimeNeo4jService:
                 }
             )
 
+        if not include_hentai:
+            nodes, edges = self._filter_hentai_content(nodes, edges)
+
         return {"nodes": nodes, "edges": edges}
 
     def _format_node(self, entry: Dict[str, Any]) -> Dict[str, Any]:
@@ -458,6 +473,51 @@ class MangaAnimeNeo4jService:
         properties = {**props, "source": "neo4j-manga-anime"}
 
         return {"id": entry.get("id"), "label": label, "type": node_type, "properties": properties}
+
+    def _filter_hentai_content(
+        self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        excluded_ids = {
+            node["id"]
+            for node in nodes
+            if node.get("type") == "work" and self._node_contains_hentai(node.get("properties") or {})
+        }
+        if not excluded_ids:
+            return nodes, edges
+
+        filtered_nodes = [node for node in nodes if node.get("id") not in excluded_ids]
+        filtered_edges = [
+            edge
+            for edge in edges
+            if edge.get("source") not in excluded_ids and edge.get("target") not in excluded_ids
+        ]
+        return filtered_nodes, filtered_edges
+
+    @staticmethod
+    def _node_contains_hentai(props: Dict[str, Any]) -> bool:
+        genres_value = props.get("genres") or props.get("genre")
+        if not genres_value:
+            return False
+        keyword = "hentai"
+        return MangaAnimeNeo4jService._value_contains_keyword(genres_value, keyword)
+
+    @staticmethod
+    def _value_contains_keyword(value: Any, keyword: str) -> bool:
+        keyword = keyword.lower()
+        if isinstance(value, str):
+            return keyword in value.lower()
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                if isinstance(item, str) and keyword in item.lower():
+                    return True
+        if isinstance(value, dict):
+            for key in value.keys():
+                if isinstance(key, str) and keyword in key.lower():
+                    return True
+            for val in value.values():
+                if isinstance(val, str) and keyword in val.lower():
+                    return True
+        return False
 
     @staticmethod
     def _infer_type(labels: List[str]) -> str:

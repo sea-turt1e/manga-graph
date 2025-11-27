@@ -1,46 +1,37 @@
 """Service layer for querying the manga_anime_list Neo4j database."""
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import Any, Dict, List, Literal, Optional
 
-from neo4j import Driver, GraphDatabase
-from neo4j.exceptions import Neo4jError
+from neo4j import GraphDatabase
 
 logger = logging.getLogger(__name__)
 
-
-SearchMode = Literal["simple", "fulltext", "ranked"]
 SearchLanguage = Literal["english", "japanese"]
+SearchMode = Literal["simple", "fulltext", "ranked"]
 VectorProperty = Literal["embedding_title_en", "embedding_title_ja", "embedding_description"]
 
 
 class MangaAnimeNeo4jService:
-    """Lightweight Neo4j accessor tailored for the MyAnimeList-derived dataset."""
+    """Service for querying the manga_anime_list Neo4j database."""
 
     def __init__(
         self,
-        driver: Optional[Driver] = None,
         uri: Optional[str] = None,
         user: Optional[str] = None,
         password: Optional[str] = None,
     ) -> None:
-        if driver is not None:
-            self.driver = driver
-            return
+        resolved_uri = uri or os.getenv("MANGA_ANIME_NEO4J_URI") or os.getenv("NEO4J_URI")
+        resolved_user = user or os.getenv("MANGA_ANIME_NEO4J_USER") or os.getenv("NEO4J_USER", "neo4j")
+        resolved_password = password or os.getenv("MANGA_ANIME_NEO4J_PASSWORD") or os.getenv("NEO4J_PASSWORD")
 
-        uri = uri or os.getenv("MANGA_ANIME_NEO4J_URI") or os.getenv("NEO4J_URI")
-        user = user or os.getenv("MANGA_ANIME_NEO4J_USER") or os.getenv("NEO4J_USER", "neo4j")
-        password = password or os.getenv("MANGA_ANIME_NEO4J_PASSWORD") or os.getenv("NEO4J_PASSWORD")
+        if not resolved_uri:
+            raise ValueError("Neo4j URI must be provided via arguments or environment variables")
+        if resolved_password is None:
+            raise ValueError("Neo4j password must be provided via arguments or environment variables")
 
-        if not uri or not password:
-            raise ValueError(
-                "MangaAnimeNeo4jService requires Neo4j connection settings. "
-                "Set MANGA_ANIME_NEO4J_* or reuse the default NEO4J_* variables."
-            )
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.driver = GraphDatabase.driver(resolved_uri, auth=(resolved_user, resolved_password))
         self.fulltext_index = os.getenv("MANGA_ANIME_FULLTEXT_INDEX", "work_titles_fulltext")
         self.fulltext_candidate_limit = int(os.getenv("MANGA_ANIME_FULLTEXT_CANDIDATE_LIMIT", "200"))
         self.rank_threshold = float(os.getenv("MANGA_ANIME_RANK_THRESHOLD", "0.45"))
@@ -81,7 +72,7 @@ class MangaAnimeNeo4jService:
                     )
                 else:
                     record = session.read_transaction(self._fetch_graph_tx_simple, query, limit, language)
-            except Neo4jError as exc:
+            except Exception as exc:
                 logger.warning("Falling back to simple search due to Neo4j error: %s", exc)
                 record = session.read_transaction(self._fetch_graph_tx_simple, query, limit, language)
 
@@ -122,6 +113,61 @@ class MangaAnimeNeo4jService:
 
         return self._convert_to_graph(record)
 
+    def fetch_author_related_works(self, author_element_id: str, limit: int = 50) -> Dict[str, List[Dict[str, Any]]]:
+        """Fetch works associated with a specific author node (identified by elementId)."""
+
+        with self.driver.session() as session:
+            record = session.read_transaction(self._fetch_author_related_works_tx, author_element_id, limit)
+
+        return self._convert_to_graph(record)
+
+    def fetch_magazine_related_works(self, magazine_element_id: str, limit: int = 50) -> Dict[str, List[Dict[str, Any]]]:
+        """Fetch works published in a specific magazine node (identified by elementId)."""
+
+        with self.driver.session() as session:
+            record = session.read_transaction(self._fetch_magazine_related_works_tx, magazine_element_id, limit)
+
+        return self._convert_to_graph(record)
+
+    def fetch_publisher_magazines(
+        self,
+        publisher_element_id: str,
+        limit: int = 50,
+        *,
+        exclude_magazine_id: Optional[str] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Fetch magazines linked to a publisher (optionally excluding a source magazine)."""
+
+        with self.driver.session() as session:
+            record = session.read_transaction(
+                self._fetch_publisher_magazines_tx,
+                publisher_element_id,
+                limit,
+                exclude_magazine_id,
+            )
+
+        return self._convert_to_graph(record)
+
+    def fetch_magazines_work_graph(
+        self,
+        magazine_element_ids: List[str],
+        *,
+        work_limit: int = 50,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Fetch works and edges for the provided magazine elementIds."""
+
+        if not magazine_element_ids:
+            return {"nodes": [], "edges": []}
+
+        with self.driver.session() as session:
+            record = session.read_transaction(
+                self._fetch_magazines_work_graph_tx,
+                magazine_element_ids,
+                work_limit,
+            )
+
+        return self._convert_to_graph(record)
+
     def close(self) -> None:
         if self.driver:
             self.driver.close()
@@ -139,9 +185,15 @@ class MangaAnimeNeo4jService:
         ORDER BY coalesce(toInteger(w.members), 0) DESC, toInteger(w.id) ASC
         LIMIT $limitCount
         OPTIONAL MATCH (w)-[r]-(n)
-        RETURN collect(DISTINCT {{id: elementId(w), labels: labels(w), properties: properties(w)}}) AS work_nodes,
-               collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {{id: elementId(n), labels: labels(n), properties: properties(n)}} END) AS neighbor_nodes,
-               collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {{id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)}} END) AS relationships
+        OPTIONAL MATCH (w)-[:PUBLISHED_IN]->(:Magazine)-[pub_rel:PUBLISHED_BY]->(pub:Publisher)
+        WITH collect(DISTINCT {{id: elementId(w), labels: labels(w), properties: properties(w)}}) AS work_nodes,
+             collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {{id: elementId(n), labels: labels(n), properties: properties(n)}} END) AS neighbor_nodes,
+             collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {{id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)}} END) AS relationships,
+             collect(DISTINCT CASE WHEN pub IS NULL THEN NULL ELSE {{id: elementId(pub), labels: labels(pub), properties: properties(pub)}} END) AS publisher_nodes,
+             collect(DISTINCT CASE WHEN pub_rel IS NULL THEN NULL ELSE {{id: elementId(pub_rel), source: elementId(startNode(pub_rel)), target: elementId(endNode(pub_rel)), type: type(pub_rel), properties: properties(pub_rel)}} END) AS publisher_relationships
+        RETURN work_nodes,
+               neighbor_nodes + publisher_nodes AS neighbor_nodes,
+               relationships + publisher_relationships AS relationships
         """
         params = {"searchTerm": query, "limitCount": limit}
         return tx.run(cypher, parameters=params).single()
@@ -163,9 +215,15 @@ class MangaAnimeNeo4jService:
         ORDER BY score DESC
         LIMIT $limitCount
         OPTIONAL MATCH (w)-[r]-(n)
-        RETURN collect(DISTINCT {id: elementId(w), labels: labels(w), properties: properties(w)}) AS work_nodes,
-               collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {id: elementId(n), labels: labels(n), properties: properties(n)} END) AS neighbor_nodes,
-               collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)} END) AS relationships
+     OPTIONAL MATCH (w)-[:PUBLISHED_IN]->(:Magazine)-[pub_rel:PUBLISHED_BY]->(pub:Publisher)
+     WITH collect(DISTINCT {id: elementId(w), labels: labels(w), properties: properties(w)}) AS work_nodes,
+          collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {id: elementId(n), labels: labels(n), properties: properties(n)} END) AS neighbor_nodes,
+          collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)} END) AS relationships,
+          collect(DISTINCT CASE WHEN pub IS NULL THEN NULL ELSE {id: elementId(pub), labels: labels(pub), properties: properties(pub)} END) AS publisher_nodes,
+          collect(DISTINCT CASE WHEN pub_rel IS NULL THEN NULL ELSE {id: elementId(pub_rel), source: elementId(startNode(pub_rel)), target: elementId(endNode(pub_rel)), type: type(pub_rel), properties: properties(pub_rel)} END) AS publisher_relationships
+     RETURN work_nodes,
+         neighbor_nodes + publisher_nodes AS neighbor_nodes,
+         relationships + publisher_relationships AS relationships
         """
         params = {
             "indexName": index_name,
@@ -209,9 +267,15 @@ class MangaAnimeNeo4jService:
         ORDER BY finalScore DESC
         LIMIT $limitCount
         OPTIONAL MATCH (w)-[r]-(n)
-        RETURN collect(DISTINCT {id: elementId(w), labels: labels(w), properties: properties(w)}) AS work_nodes,
-               collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {id: elementId(n), labels: labels(n), properties: properties(n)} END) AS neighbor_nodes,
-               collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)} END) AS relationships
+     OPTIONAL MATCH (w)-[:PUBLISHED_IN]->(:Magazine)-[pub_rel:PUBLISHED_BY]->(pub:Publisher)
+     WITH collect(DISTINCT {id: elementId(w), labels: labels(w), properties: properties(w)}) AS work_nodes,
+          collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {id: elementId(n), labels: labels(n), properties: properties(n)} END) AS neighbor_nodes,
+          collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)} END) AS relationships,
+          collect(DISTINCT CASE WHEN pub IS NULL THEN NULL ELSE {id: elementId(pub), labels: labels(pub), properties: properties(pub)} END) AS publisher_nodes,
+          collect(DISTINCT CASE WHEN pub_rel IS NULL THEN NULL ELSE {id: elementId(pub_rel), source: elementId(startNode(pub_rel)), target: elementId(endNode(pub_rel)), type: type(pub_rel), properties: properties(pub_rel)} END) AS publisher_relationships
+     RETURN work_nodes,
+         neighbor_nodes + publisher_nodes AS neighbor_nodes,
+         relationships + publisher_relationships AS relationships
         """
         params = {
             "indexName": index_name,
@@ -226,14 +290,104 @@ class MangaAnimeNeo4jService:
 
     @staticmethod
     def _fetch_work_subgraph_tx(tx, work_id: str):
-     cypher = """
-     MATCH (w:Work {id: $work_id})
+        cypher = """
+        MATCH (w:Work {id: $work_id})
         OPTIONAL MATCH (w)-[r]-(n)
         RETURN collect(DISTINCT {id: elementId(w), labels: labels(w), properties: properties(w)}) AS work_nodes,
-               collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {id: elementId(n), labels: labels(n), properties: properties(n)} END) AS neighbor_nodes,
-               collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)} END) AS relationships
+            collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {id: elementId(n), labels: labels(n), properties: properties(n)} END) AS neighbor_nodes,
+            collect(DISTINCT CASE WHEN r IS NULL THEN NULL ELSE {id: elementId(r), source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r), properties: properties(r)} END) AS relationships
         """
-     return tx.run(cypher, parameters={"work_id": work_id}).single()
+        return tx.run(cypher, parameters={"work_id": work_id}).single()
+
+    @staticmethod
+    def _fetch_author_related_works_tx(tx, author_element_id: str, limit: int):
+        cypher = """
+        MATCH (a:Author)
+        WHERE elementId(a) = $authorElementId
+        MATCH (w:Work)-[rel:CREATED_BY]->(a)
+        WITH a, w, rel
+    ORDER BY toLower(toString(coalesce(w.title_name, w.english_name, w.title, w.id, '')))
+        LIMIT $limitCount
+        RETURN collect(DISTINCT {id: elementId(w), labels: labels(w), properties: properties(w)}) AS work_nodes,
+               [{id: elementId(a), labels: labels(a), properties: properties(a)}] AS neighbor_nodes,
+               collect(DISTINCT {id: elementId(rel), source: elementId(w), target: elementId(a), type: type(rel), properties: properties(rel)}) AS relationships
+        """
+        params = {"authorElementId": author_element_id, "limitCount": limit}
+        return tx.run(cypher, parameters=params).single()
+
+    @staticmethod
+    def _fetch_magazine_related_works_tx(tx, magazine_element_id: str, limit: int):
+        cypher = """
+        MATCH (m:Magazine)
+        WHERE elementId(m) = $magazineElementId
+        MATCH (w:Work)-[rel:PUBLISHED_IN]->(m)
+        WITH m, w, rel
+    ORDER BY toLower(toString(coalesce(w.title_name, w.english_name, w.title, w.id, '')))
+        LIMIT $limitCount
+        RETURN collect(DISTINCT {id: elementId(w), labels: labels(w), properties: properties(w)}) AS work_nodes,
+               [{id: elementId(m), labels: labels(m), properties: properties(m)}] AS neighbor_nodes,
+               collect(DISTINCT {id: elementId(rel), source: elementId(w), target: elementId(m), type: type(rel), properties: properties(rel)}) AS relationships
+        """
+        params = {"magazineElementId": magazine_element_id, "limitCount": limit}
+        return tx.run(cypher, parameters=params).single()
+
+    @staticmethod
+    def _fetch_publisher_magazines_tx(tx, publisher_element_id: str, limit: int, exclude_magazine_id: Optional[str]):
+        cypher = """
+        MATCH (p:Publisher)
+        WHERE elementId(p) = $publisherElementId
+        MATCH (m:Magazine)-[rel:PUBLISHED_BY]->(p)
+        WHERE $excludeMagazineId IS NULL OR elementId(m) <> $excludeMagazineId
+        WITH p, m, rel
+        ORDER BY toLower(coalesce(m.name, ''))
+        LIMIT $limitCount
+        RETURN collect(DISTINCT {id: elementId(m), labels: labels(m), properties: properties(m)}) AS work_nodes,
+               [{id: elementId(p), labels: labels(p), properties: properties(p)}] AS neighbor_nodes,
+               collect(DISTINCT {id: elementId(rel), source: elementId(m), target: elementId(p), type: type(rel), properties: properties(rel)}) AS relationships
+        """
+        params = {
+            "publisherElementId": publisher_element_id,
+            "limitCount": limit,
+            "excludeMagazineId": exclude_magazine_id,
+        }
+        return tx.run(cypher, parameters=params).single()
+
+    @staticmethod
+    def _fetch_magazines_work_graph_tx(tx, magazine_element_ids: List[str], work_limit: int):
+        cypher = """
+        MATCH (m:Magazine)
+        WHERE elementId(m) IN $magazineElementIds
+        WITH m
+        CALL {
+            WITH m, $workLimit AS limitCount
+            OPTIONAL MATCH (m)<-[rel:PUBLISHED_IN]-(w:Work)
+            ORDER BY toLower(toString(coalesce(w.title_name, w.english_name, w.title, w.id, '')))
+            LIMIT limitCount
+            RETURN collect(DISTINCT CASE WHEN w IS NULL THEN NULL ELSE {id: elementId(w), labels: labels(w), properties: properties(w)} END) AS works,
+                   collect(DISTINCT CASE WHEN rel IS NULL THEN NULL ELSE {id: elementId(rel), source: elementId(w), target: elementId(m), type: type(rel), properties: properties(rel)} END) AS rels
+        }
+        WITH collect(DISTINCT {id: elementId(m), labels: labels(m), properties: properties(m)}) AS magazine_nodes,
+             collect(works) AS works_lists,
+             collect(rels) AS rels_lists
+        WITH magazine_nodes,
+             REDUCE(acc = [], wl IN works_lists | acc + wl) AS flattened_works,
+             REDUCE(acc = [], rl IN rels_lists | acc + rl) AS flattened_rels
+        WITH magazine_nodes, flattened_works, flattened_rels
+        UNWIND (CASE WHEN size(flattened_works) = 0 THEN [NULL] ELSE flattened_works END) AS work_entry
+        WITH magazine_nodes, flattened_rels, collect(DISTINCT work_entry) AS work_nodes_raw
+        WITH magazine_nodes, flattened_rels, [w IN work_nodes_raw WHERE w IS NOT NULL] AS work_nodes
+        UNWIND (CASE WHEN size(flattened_rels) = 0 THEN [NULL] ELSE flattened_rels END) AS rel_entry
+        WITH magazine_nodes, work_nodes, collect(DISTINCT rel_entry) AS rel_nodes_raw
+        WITH magazine_nodes, work_nodes, [r IN rel_nodes_raw WHERE r IS NOT NULL] AS relationships
+        RETURN work_nodes,
+               magazine_nodes AS neighbor_nodes,
+               relationships
+        """
+        params = {
+            "magazineElementIds": magazine_element_ids,
+            "workLimit": work_limit,
+        }
+        return tx.run(cypher, parameters=params).single()
 
     @staticmethod
     def _vector_similarity_tx(tx, property_name: str, query_embedding: List[float], limit: int):
@@ -321,15 +475,30 @@ class MangaAnimeNeo4jService:
 
     @staticmethod
     def _derive_label(node_type: str, props: Dict[str, Any]) -> str:
+        def pick(*candidates: Any, default: str) -> str:
+            for candidate in candidates:
+                if candidate is None:
+                    continue
+                text = str(candidate).strip()
+                if text:
+                    return text
+            return default
+
         if node_type == "work":
-            return props.get("title_name") or props.get("english_name") or props.get("title") or props.get("id") or "Work"
+            return pick(
+                props.get("title_name"),
+                props.get("english_name"),
+                props.get("title"),
+                props.get("id"),
+                default="Work",
+            )
         if node_type == "author":
-            return props.get("name") or props.get("english_name") or "Author"
+            return pick(props.get("name"), props.get("english_name"), default="Author")
         if node_type == "magazine":
-            return props.get("name") or props.get("title") or "Magazine"
+            return pick(props.get("name"), props.get("title"), default="Magazine")
         if node_type == "publisher":
-            return props.get("name") or "Publisher"
-        return props.get("name") or props.get("title") or "Node"
+            return pick(props.get("name"), default="Publisher")
+        return pick(props.get("name"), props.get("title"), default="Node")
 
     # ------------------------------------------------------------------
     # Query helpers

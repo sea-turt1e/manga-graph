@@ -69,6 +69,11 @@ class GraphResponse(BaseModel):
     total_edges: int
 
 
+class MagazineWorkGraphRequest(BaseModel):
+    magazine_element_ids: List[str]
+    work_limit: Optional[int] = 50
+
+
 class AuthorResponse(BaseModel):
     id: str
     name: str

@@ -21,7 +21,8 @@ from presentation.schemas import (AddEmbeddingRequest, AuthorResponse,
                                   BulkImageFetchResponse, CoverResponse,
                                   GraphResponse, ImageFetchRequest,
                                   ImageFetchResponse, MagazineResponse,
-                                  SearchRequest, SynopsisVectorSearchRequest,
+                                  MagazineWorkGraphRequest, SearchRequest,
+                                  SynopsisVectorSearchRequest,
                                   SynopsisVectorSearchResponse,
                                   SynopsisVectorSearchResponseItem,
                                   TitleSimilarityItem, TitleSimilarityResponse,
@@ -103,6 +104,22 @@ EMBED_TITLE_DIMS = int(os.getenv("JINA_TITLE_EMBED_DIM", "256"))
 EMBED_DESCRIPTION_DIMS = int(os.getenv("JINA_DESCRIPTION_EMBED_DIM", "1024"))
 
 
+EMBEDDING_FIELDS = {"embedding_title_ja", "embedding_title_en", "embedding_description"}
+
+
+def _strip_embedding_fields(graph_data: Dict[str, List[Dict]]) -> None:
+    """Remove embedding arrays from node properties to keep API payloads light."""
+
+    nodes = graph_data.get("nodes", [])
+    for node in nodes:
+        props = node.get("properties") if isinstance(node, dict) else None
+        if not isinstance(props, dict):
+            continue
+        for field in EMBEDDING_FIELDS:
+            if field in props:
+                props.pop(field, None)
+
+
 def _get_query_embedding(query: str, dims: int) -> List[float]:
     client = get_jina_embedding_client()
     vector = client.encode(query)
@@ -138,6 +155,7 @@ def _handle_manga_anime_graph(
 ) -> GraphResponse:
     try:
         graph_data = service.fetch_graph(query=query, limit=limit, language=language, mode=mode)
+        _strip_embedding_fields(graph_data)
         return _graph_response_from_data(graph_data)
     except HTTPException:
         raise
@@ -513,12 +531,99 @@ async def get_manga_anime_work_subgraph(
         if not graph_data["nodes"]:
             raise HTTPException(status_code=404, detail="Work not found in manga_anime_list database")
 
+        _strip_embedding_fields(graph_data)
         return GraphResponse(
             nodes=graph_data["nodes"],
             edges=graph_data["edges"],
             total_nodes=len(graph_data["nodes"]),
             total_edges=len(graph_data["edges"]),
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@manga_anime_router.get("/author/{author_node_id}/works", response_model=GraphResponse)
+async def get_author_related_works(
+    author_node_id: str,
+    limit: int = Query(50, description="取得する作品数の上限", ge=1, le=500),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Return other works created by the specified Author node (elementId)."""
+
+    try:
+        graph_data = service.fetch_author_related_works(author_node_id, limit)
+        _strip_embedding_fields(graph_data)
+        return _graph_response_from_data(graph_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@manga_anime_router.get("/magazine/{magazine_node_id}/works", response_model=GraphResponse)
+async def get_magazine_related_works(
+    magazine_node_id: str,
+    limit: int = Query(50, description="取得する作品数の上限", ge=1, le=500),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Return works that are published in the specified Magazine node (elementId)."""
+
+    try:
+        graph_data = service.fetch_magazine_related_works(magazine_node_id, limit)
+        _strip_embedding_fields(graph_data)
+        return _graph_response_from_data(graph_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@manga_anime_router.get("/publisher/{publisher_node_id}/magazines", response_model=GraphResponse)
+async def get_publisher_magazines(
+    publisher_node_id: str,
+    limit: int = Query(50, description="取得する雑誌数の上限", ge=1, le=500),
+    exclude_magazine_id: Optional[str] = Query(None, description="除外したい雑誌ノードの elementId (任意)"),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Return other magazines managed by the specified Publisher node."""
+
+    try:
+        graph_data = service.fetch_publisher_magazines(
+            publisher_element_id=publisher_node_id,
+            limit=limit,
+            exclude_magazine_id=exclude_magazine_id,
+        )
+        _strip_embedding_fields(graph_data)
+        return _graph_response_from_data(graph_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@manga_anime_router.post("/magazines/work-graph", response_model=GraphResponse)
+async def get_magazines_work_graph(
+    request: MagazineWorkGraphRequest,
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Return works connected to the supplied magazine elementIds."""
+
+    if not request.magazine_element_ids:
+        raise HTTPException(status_code=400, detail="magazine_element_ids is required")
+
+    work_limit = request.work_limit or 50
+    if work_limit < 1 or work_limit > 500:
+        raise HTTPException(status_code=400, detail="work_limit must be between 1 and 500")
+
+    try:
+        graph_data = service.fetch_magazines_work_graph(
+            magazine_element_ids=request.magazine_element_ids,
+            work_limit=work_limit,
+        )
+        _strip_embedding_fields(graph_data)
+        return _graph_response_from_data(graph_data)
     except HTTPException:
         raise
     except Exception as e:

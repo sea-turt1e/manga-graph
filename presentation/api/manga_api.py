@@ -19,6 +19,9 @@ from presentation.schemas import (AddEmbeddingRequest, AuthorResponse,
                                   BulkCoverRequest, BulkCoverResponse,
                                   BulkImageFetchRequest,
                                   BulkImageFetchResponse, CoverResponse,
+                                  EmbeddingSimilaritySearchRequest,
+                                  EmbeddingSimilaritySearchResponse,
+                                  EmbeddingSimilaritySearchResultItem,
                                   GraphResponse, ImageFetchRequest,
                                   ImageFetchResponse, MagazineResponse,
                                   MagazineWorkGraphRequest, SearchRequest,
@@ -607,13 +610,26 @@ async def get_magazine_related_works(
     magazine_node_id: str,
     limit: int = Query(50, description="取得する作品数の上限", ge=1, le=500),
     include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
+    reference_work_id: Optional[str] = Query(
+        None,
+        description="基準となる作品のID。指定すると demographic > themes > publishing_date の優先順位でソート",
+    ),
     service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
 ):
-    """Return works that are published in the specified Magazine node (elementId)."""
+    """Return works that are published in the specified Magazine node (elementId).
+
+    If reference_work_id is provided, results are sorted by similarity:
+    1. Same demographic (full match > partial match)
+    2. Overlapping themes (more overlap = higher priority)
+    3. Publishing date overlap (Jaccard similarity)
+    """
 
     try:
         graph_data = service.fetch_magazine_related_works(
-            magazine_node_id, limit, include_hentai=include_hentai
+            magazine_node_id,
+            limit,
+            include_hentai=include_hentai,
+            reference_work_id=reference_work_id,
         )
         _strip_embedding_fields(graph_data)
         return _graph_response_from_data(graph_data)
@@ -653,7 +669,13 @@ async def get_magazines_work_graph(
     request: MagazineWorkGraphRequest,
     service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
 ):
-    """Return works connected to the supplied magazine elementIds."""
+    """Return works connected to the supplied magazine elementIds.
+
+    If reference_work_id is provided in the request, results are sorted by similarity:
+    1. Same demographic (full match > partial match)
+    2. Overlapping themes (more overlap = higher priority)
+    3. Publishing date overlap (Jaccard similarity)
+    """
 
     if not request.magazine_element_ids:
         raise HTTPException(status_code=400, detail="magazine_element_ids is required")
@@ -668,11 +690,115 @@ async def get_magazines_work_graph(
             magazine_element_ids=request.magazine_element_ids,
             work_limit=work_limit,
             include_hentai=include_hentai,
+            reference_work_id=request.reference_work_id,
         )
         _strip_embedding_fields(graph_data)
         return _graph_response_from_data(graph_data)
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Valid Matryoshka dimensions for jina-embeddings-v4
+VALID_EMBEDDING_DIMS = {128, 256, 512, 1024, 2048}
+EMBEDDING_TYPE_TO_PROPERTY = {
+    "title_ja": "embedding_title_ja",
+    "title_en": "embedding_title_en",
+    "description": "embedding_description",
+}
+
+
+@manga_anime_router.post("/vector/similarity", response_model=EmbeddingSimilaritySearchResponse)
+async def search_similar_by_embedding(
+    request: EmbeddingSimilaritySearchRequest,
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """
+    クエリテキストから埋め込みベクトルを生成し、Neo4jに格納されたWorkノードの
+    embedding_title_ja, embedding_title_en, embedding_description から類似度検索を行います。
+
+    - embedding_type: "title_ja", "title_en", "description" から選択
+    - embedding_dims: jina-embeddings-v4のMatryoshka dimensions (128, 256, 512, 1024, 2048)
+    - limit: 返却件数（デフォルト5、最大100）
+    - threshold: 類似度閾値（デフォルト0.5、範囲0.0〜1.0）
+    - include_hentai: Hentaiジャンルを含めるか
+    """
+    # Validate embedding_type
+    if request.embedding_type not in EMBEDDING_TYPE_TO_PROPERTY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"embedding_type must be one of: {list(EMBEDDING_TYPE_TO_PROPERTY.keys())}",
+        )
+
+    # Validate embedding_dims
+    if request.embedding_dims not in VALID_EMBEDDING_DIMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"embedding_dims must be one of: {sorted(VALID_EMBEDDING_DIMS)}",
+        )
+
+    # Validate limit
+    if request.limit < 1 or request.limit > 100:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
+
+    # Validate threshold
+    if request.threshold < 0.0 or request.threshold > 1.0:
+        raise HTTPException(status_code=400, detail="threshold must be between 0.0 and 1.0")
+
+    # Validate query
+    if not request.query or not request.query.strip():
+        raise HTTPException(status_code=400, detail="query cannot be empty")
+
+    try:
+        # Generate embedding from query text
+        client = get_jina_embedding_client()
+        vector = client.encode(request.query)
+        if vector is None:
+            raise HTTPException(status_code=400, detail="Failed to generate embedding for query")
+
+        # Truncate to requested dimensions
+        query_embedding = JinaEmbeddingClient.truncate(vector, request.embedding_dims)
+
+        # Get property name
+        property_name = EMBEDDING_TYPE_TO_PROPERTY[request.embedding_type]
+
+        # Search similar works
+        results = service.search_similar_works(
+            query_embedding=query_embedding,
+            property_name=property_name,
+            limit=request.limit,
+            threshold=request.threshold,
+            include_hentai=request.include_hentai,
+        )
+
+        # Convert to response items
+        items = [
+            EmbeddingSimilaritySearchResultItem(
+                work_id=r["work_id"],
+                title_en=r.get("title_en"),
+                title_ja=r.get("title_ja"),
+                description=r.get("description"),
+                similarity_score=r["similarity_score"],
+                media_type=r.get("media_type"),
+                genres=r.get("genres"),
+            )
+            for r in results
+        ]
+
+        return EmbeddingSimilaritySearchResponse(
+            results=items,
+            total=len(items),
+            query=request.query,
+            embedding_type=request.embedding_type,
+            embedding_dims=request.embedding_dims,
+            threshold=request.threshold,
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

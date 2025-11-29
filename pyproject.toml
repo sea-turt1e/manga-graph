@@ -22,6 +22,7 @@ dependencies = [
     "SudachiPy==0.6.10",
     "sentence-transformers>=2.2.0",
     "sentencepiece==0.2.1",
+    "peft>=0.10.0",
     "sparqlwrapper==2.0.0",
     "torch>=2.8.0",
     "torchvision>=0.23.0",
@@ -37,7 +38,8 @@ dev = [
 ]
 
 [[tool.uv.index]]
-url = "https://download.pytorch.org/whl/cpu"
+url = "https://pypi.org/simple"
 
 [[tool.uv.index]]
-url = "https://pypi.org/simple"
+url = "https://download.pytorch.org/whl/cpu"
+

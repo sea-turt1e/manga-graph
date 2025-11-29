@@ -1,4 +1,5 @@
-from typing import List, Optional
+import os
+from typing import Dict, Generator, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -6,36 +7,35 @@ from domain.services import MediaArtsDataService
 from domain.services.batch_embedding_processor import BatchEmbeddingProcessor
 from domain.services.cover_cache_service import get_cache_service
 from domain.services.cover_image_service import get_cover_service
-from domain.services.image_fetch_service import ImageFetchService, get_image_fetch_service
+from domain.services.image_fetch_service import (ImageFetchService,
+                                                 get_image_fetch_service)
+from domain.services.jina_embedding_client import (JinaEmbeddingClient,
+                                                   get_jina_embedding_client)
+from domain.services.manga_anime_neo4j_service import MangaAnimeNeo4jService
 from domain.services.neo4j_media_arts_service import Neo4jMediaArtsService
 from domain.use_cases import SearchMangaUseCase
 from infrastructure.database import Neo4jMangaRepository
-from presentation.schemas import (
-    AddEmbeddingRequest,
-    AuthorResponse,
-    BulkCoverRequest,
-    BulkCoverResponse,
-    BulkImageFetchRequest,
-    BulkImageFetchResponse,
-    CoverResponse,
-    GraphResponse,
-    ImageFetchRequest,
-    ImageFetchResponse,
-    MagazineResponse,
-    SearchRequest,
-    SynopsisVectorSearchRequest,
-    SynopsisVectorSearchResponse,
-    SynopsisVectorSearchResponseItem,
-    TitleSimilarityItem,
-    TitleSimilarityResponse,
-    VectorIndexRequest,
-    VectorSearchRequest,
-    WorkResponse,
-)
+from presentation.schemas import (AddEmbeddingRequest, AuthorResponse,
+                                  BulkCoverRequest, BulkCoverResponse,
+                                  BulkImageFetchRequest,
+                                  BulkImageFetchResponse, CoverResponse,
+                                  EmbeddingSimilaritySearchRequest,
+                                  EmbeddingSimilaritySearchResponse,
+                                  EmbeddingSimilaritySearchResultItem,
+                                  GraphResponse, ImageFetchRequest,
+                                  ImageFetchResponse, MagazineResponse,
+                                  MagazineWorkGraphRequest, SearchRequest,
+                                  SynopsisVectorSearchRequest,
+                                  SynopsisVectorSearchResponse,
+                                  SynopsisVectorSearchResponseItem,
+                                  TitleSimilarityItem, TitleSimilarityResponse,
+                                  VectorIndexRequest, VectorSearchRequest,
+                                  WorkResponse)
 
 router = APIRouter(prefix="/api/v1", tags=["manga"])
 media_arts_router = APIRouter(prefix="/api/v1/media-arts", tags=["media-arts"])
 neo4j_router = APIRouter(prefix="/api/v1/neo4j", tags=["neo4j-fast"])
+manga_anime_router = APIRouter(prefix="/api/v1/manga-anime-neo4j", tags=["manga-anime-neo4j"])
 # BatchEmbeddingProcessorを使って埋め込みを生成
 
 
@@ -70,6 +70,15 @@ def get_neo4j_media_arts_service():
     return Neo4jMediaArtsService()
 
 
+def get_manga_anime_service() -> Generator[MangaAnimeNeo4jService, None, None]:
+    """Dependency to get manga_anime_list Neo4j service instance."""
+    service = MangaAnimeNeo4jService()
+    try:
+        yield service
+    finally:
+        service.close()
+
+
 def get_cover_image_service():
     """Dependency to get cover image service"""
     return get_cover_service()
@@ -83,6 +92,89 @@ def get_cover_cache_service():
 def get_image_fetch_service_dep():
     """Dependency to get image fetch service"""
     return get_image_fetch_service()
+
+
+def _graph_response_from_data(graph_data: Dict[str, List[Dict]]) -> GraphResponse:
+    return GraphResponse(
+        nodes=graph_data["nodes"],
+        edges=graph_data["edges"],
+        total_nodes=len(graph_data["nodes"]),
+        total_edges=len(graph_data["edges"]),
+    )
+
+
+EMBED_TITLE_DIMS = int(os.getenv("JINA_TITLE_EMBED_DIM", "256"))
+EMBED_DESCRIPTION_DIMS = int(os.getenv("JINA_DESCRIPTION_EMBED_DIM", "1024"))
+
+
+EMBEDDING_FIELDS = {"embedding_title_ja", "embedding_title_en", "embedding_description"}
+
+
+def _strip_embedding_fields(graph_data: Dict[str, List[Dict]]) -> None:
+    """Remove embedding arrays from node properties to keep API payloads light."""
+
+    nodes = graph_data.get("nodes", [])
+    for node in nodes:
+        props = node.get("properties") if isinstance(node, dict) else None
+        if not isinstance(props, dict):
+            continue
+        for field in EMBEDDING_FIELDS:
+            if field in props:
+                props.pop(field, None)
+
+
+def _get_query_embedding(query: str, dims: int) -> List[float]:
+    client = get_jina_embedding_client()
+    vector = client.encode(query)
+    if vector is None:
+        raise HTTPException(status_code=400, detail="Query text is required for embedding search")
+    return JinaEmbeddingClient.truncate(vector, dims)
+
+
+def _handle_vector_search(
+    *,
+    query: str,
+    dims: int,
+    property_name: str,
+    limit: int,
+    service: MangaAnimeNeo4jService,
+    include_hentai: bool,
+) -> GraphResponse:
+    embedding = _get_query_embedding(query, dims)
+    graph_data = service.fetch_similar_by_embedding(
+        query_embedding=embedding,
+        property_name=property_name,  # type: ignore[arg-type]
+        limit=limit,
+        include_hentai=include_hentai,
+    )
+    return _graph_response_from_data(graph_data)
+
+
+def _handle_manga_anime_graph(
+    service: MangaAnimeNeo4jService,
+    *,
+    query: Optional[str],
+    limit: int,
+    language: str,
+    mode: str,
+    include_hentai: bool,
+) -> GraphResponse:
+    try:
+        graph_data = service.fetch_graph(
+            query=query,
+            limit=limit,
+            language=language,
+            mode=mode,
+            include_hentai=include_hentai,
+        )
+        _strip_embedding_fields(graph_data)
+        return _graph_response_from_data(graph_data)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/search", response_model=GraphResponse)
@@ -361,6 +453,352 @@ async def get_magazine_relationships_media_arts(
             total_edges=len(graph_data["edges"]),
         )
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Manga Anime Neo4j endpoints
+@manga_anime_router.get("/graph", response_model=GraphResponse)
+async def get_manga_anime_graph(
+    q: Optional[str] = Query(None, description="検索キーワード"),
+    lang: str = Query("english", regex="^(english|japanese)$", description="検索対象のタイトル言語"),
+    mode: str = Query(
+        "simple",
+        regex="^(simple|fulltext|ranked)$",
+        description="simple:部分一致 / fulltext:Lucene fuzzy / ranked:再ランク",
+    ),
+    limit: int = Query(50, description="取得するWork数の上限", ge=1, le=500),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Retrieve a slice of the manga_anime_list graph with selectable search mode and language."""
+
+    return _handle_manga_anime_graph(
+        service,
+        query=q,
+        limit=limit,
+        language=lang,
+        mode=mode,
+        include_hentai=include_hentai,
+    )
+
+
+@manga_anime_router.get("/graph/english", response_model=GraphResponse, include_in_schema=False)
+async def get_manga_anime_graph_english(
+    q: Optional[str] = Query(None, description="検索キーワード（部分一致）"),
+    mode: str = Query("simple", regex="^(simple|fulltext|ranked)$"),
+    limit: int = Query(50, description="取得するWork数の上限", ge=1, le=500),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Backward-compatible endpoint for English title search."""
+
+    return _handle_manga_anime_graph(
+        service,
+        query=q,
+        limit=limit,
+        language="english",
+        mode=mode,
+        include_hentai=include_hentai,
+    )
+
+
+@manga_anime_router.get("/graph/japanese", response_model=GraphResponse, include_in_schema=False)
+async def get_manga_anime_graph_japanese(
+    q: Optional[str] = Query(None, description='検索キーワード（japanese_nameによる部分一致）'),
+    mode: str = Query("simple", regex="^(simple|fulltext|ranked)$"),
+    limit: int = Query(50, description="取得するWork数の上限", ge=1, le=500),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Backward-compatible endpoint for Japanese title search."""
+
+    return _handle_manga_anime_graph(
+        service,
+        query=q,
+        limit=limit,
+        language="japanese",
+        mode=mode,
+        include_hentai=include_hentai,
+    )
+
+
+@manga_anime_router.get("/vector/title", response_model=GraphResponse)
+async def get_manga_anime_title_vector(
+    q: str = Query(..., description="タイトルで類似検索するクエリテキスト"),
+    lang: str = Query("english", regex="^(english|japanese)$", description="使用するタイトル埋め込み"),
+    limit: int = Query(20, description="取得件数", ge=1, le=200),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    property_name = "embedding_title_ja" if lang == "japanese" else "embedding_title_en"
+    return _handle_vector_search(
+        query=q,
+        dims=EMBED_TITLE_DIMS,
+        property_name=property_name,
+        limit=limit,
+        service=service,
+        include_hentai=include_hentai,
+    )
+
+
+@manga_anime_router.get("/vector/description", response_model=GraphResponse)
+async def get_manga_anime_description_vector(
+    q: str = Query(..., description="作品説明で類似検索するクエリテキスト"),
+    limit: int = Query(20, description="取得件数", ge=1, le=200),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    return _handle_vector_search(
+        query=q,
+        dims=EMBED_DESCRIPTION_DIMS,
+        property_name="embedding_description",
+        limit=limit,
+        service=service,
+        include_hentai=include_hentai,
+    )
+
+
+@manga_anime_router.get("/work/{work_id}", response_model=GraphResponse)
+async def get_manga_anime_work_subgraph(
+    work_id: str,
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Fetch a focused subgraph for a specific work ID."""
+    try:
+        graph_data = service.fetch_work_subgraph(work_id=work_id, include_hentai=include_hentai)
+        if not graph_data["nodes"]:
+            raise HTTPException(status_code=404, detail="Work not found in manga_anime_list database")
+
+        _strip_embedding_fields(graph_data)
+        return GraphResponse(
+            nodes=graph_data["nodes"],
+            edges=graph_data["edges"],
+            total_nodes=len(graph_data["nodes"]),
+            total_edges=len(graph_data["edges"]),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@manga_anime_router.get("/author/{author_node_id}/works", response_model=GraphResponse)
+async def get_author_related_works(
+    author_node_id: str,
+    limit: int = Query(50, description="取得する作品数の上限", ge=1, le=500),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Return other works created by the specified Author node (elementId)."""
+
+    try:
+        graph_data = service.fetch_author_related_works(
+            author_node_id, limit, include_hentai=include_hentai
+        )
+        _strip_embedding_fields(graph_data)
+        return _graph_response_from_data(graph_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@manga_anime_router.get("/magazine/{magazine_node_id}/works", response_model=GraphResponse)
+async def get_magazine_related_works(
+    magazine_node_id: str,
+    limit: int = Query(50, description="取得する作品数の上限", ge=1, le=500),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
+    reference_work_id: Optional[str] = Query(
+        None,
+        description="基準となる作品のID。指定すると demographic > themes > publishing_date の優先順位でソート",
+    ),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Return works that are published in the specified Magazine node (elementId).
+
+    If reference_work_id is provided, results are sorted by similarity:
+    1. Same demographic (full match > partial match)
+    2. Overlapping themes (more overlap = higher priority)
+    3. Publishing date overlap (Jaccard similarity)
+    """
+
+    try:
+        graph_data = service.fetch_magazine_related_works(
+            magazine_node_id,
+            limit,
+            include_hentai=include_hentai,
+            reference_work_id=reference_work_id,
+        )
+        _strip_embedding_fields(graph_data)
+        return _graph_response_from_data(graph_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@manga_anime_router.get("/publisher/{publisher_node_id}/magazines", response_model=GraphResponse)
+async def get_publisher_magazines(
+    publisher_node_id: str,
+    limit: int = Query(50, description="取得する雑誌数の上限", ge=1, le=500),
+    exclude_magazine_id: Optional[str] = Query(None, description="除外したい雑誌ノードの elementId (任意)"),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Return other magazines managed by the specified Publisher node."""
+
+    try:
+        graph_data = service.fetch_publisher_magazines(
+            publisher_element_id=publisher_node_id,
+            limit=limit,
+            exclude_magazine_id=exclude_magazine_id,
+            include_hentai=include_hentai,
+        )
+        _strip_embedding_fields(graph_data)
+        return _graph_response_from_data(graph_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@manga_anime_router.post("/magazines/work-graph", response_model=GraphResponse)
+async def get_magazines_work_graph(
+    request: MagazineWorkGraphRequest,
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Return works connected to the supplied magazine elementIds.
+
+    If reference_work_id is provided in the request, results are sorted by similarity:
+    1. Same demographic (full match > partial match)
+    2. Overlapping themes (more overlap = higher priority)
+    3. Publishing date overlap (Jaccard similarity)
+    """
+
+    if not request.magazine_element_ids:
+        raise HTTPException(status_code=400, detail="magazine_element_ids is required")
+
+    work_limit = request.work_limit or 50
+    if work_limit < 1 or work_limit > 500:
+        raise HTTPException(status_code=400, detail="work_limit must be between 1 and 500")
+    include_hentai = bool(request.include_hentai)
+
+    try:
+        graph_data = service.fetch_magazines_work_graph(
+            magazine_element_ids=request.magazine_element_ids,
+            work_limit=work_limit,
+            include_hentai=include_hentai,
+            reference_work_id=request.reference_work_id,
+        )
+        _strip_embedding_fields(graph_data)
+        return _graph_response_from_data(graph_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Valid Matryoshka dimensions for jina-embeddings-v4
+VALID_EMBEDDING_DIMS = {128, 256, 512, 1024, 2048}
+EMBEDDING_TYPE_TO_PROPERTY = {
+    "title_ja": "embedding_title_ja",
+    "title_en": "embedding_title_en",
+    "description": "embedding_description",
+}
+
+
+@manga_anime_router.post("/vector/similarity", response_model=EmbeddingSimilaritySearchResponse)
+async def search_similar_by_embedding(
+    request: EmbeddingSimilaritySearchRequest,
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """
+    クエリテキストから埋め込みベクトルを生成し、Neo4jに格納されたWorkノードの
+    embedding_title_ja, embedding_title_en, embedding_description から類似度検索を行います。
+
+    - embedding_type: "title_ja", "title_en", "description" から選択
+    - embedding_dims: jina-embeddings-v4のMatryoshka dimensions (128, 256, 512, 1024, 2048)
+    - limit: 返却件数（デフォルト5、最大100）
+    - threshold: 類似度閾値（デフォルト0.5、範囲0.0〜1.0）
+    - include_hentai: Hentaiジャンルを含めるか
+    """
+    # Validate embedding_type
+    if request.embedding_type not in EMBEDDING_TYPE_TO_PROPERTY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"embedding_type must be one of: {list(EMBEDDING_TYPE_TO_PROPERTY.keys())}",
+        )
+
+    # Validate embedding_dims
+    if request.embedding_dims not in VALID_EMBEDDING_DIMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"embedding_dims must be one of: {sorted(VALID_EMBEDDING_DIMS)}",
+        )
+
+    # Validate limit
+    if request.limit < 1 or request.limit > 100:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
+
+    # Validate threshold
+    if request.threshold < 0.0 or request.threshold > 1.0:
+        raise HTTPException(status_code=400, detail="threshold must be between 0.0 and 1.0")
+
+    # Validate query
+    if not request.query or not request.query.strip():
+        raise HTTPException(status_code=400, detail="query cannot be empty")
+
+    try:
+        # Generate embedding from query text
+        client = get_jina_embedding_client()
+        vector = client.encode(request.query)
+        if vector is None:
+            raise HTTPException(status_code=400, detail="Failed to generate embedding for query")
+
+        # Truncate to requested dimensions
+        query_embedding = JinaEmbeddingClient.truncate(vector, request.embedding_dims)
+
+        # Get property name
+        property_name = EMBEDDING_TYPE_TO_PROPERTY[request.embedding_type]
+
+        # Search similar works
+        results = service.search_similar_works(
+            query_embedding=query_embedding,
+            property_name=property_name,
+            limit=request.limit,
+            threshold=request.threshold,
+            include_hentai=request.include_hentai,
+        )
+
+        # Convert to response items
+        items = [
+            EmbeddingSimilaritySearchResultItem(
+                work_id=r["work_id"],
+                title_en=r.get("title_en"),
+                title_ja=r.get("title_ja"),
+                description=r.get("description"),
+                similarity_score=r["similarity_score"],
+                media_type=r.get("media_type"),
+                genres=r.get("genres"),
+            )
+            for r in results
+        ]
+
+        return EmbeddingSimilaritySearchResponse(
+            results=items,
+            total=len(items),
+            query=request.query,
+            embedding_type=request.embedding_type,
+            embedding_dims=request.embedding_dims,
+            threshold=request.threshold,
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

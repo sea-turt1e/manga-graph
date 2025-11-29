@@ -7,14 +7,9 @@ from neo4j import GraphDatabase
 
 # Ensure environment variables are loaded at import time
 from config import env  # noqa: F401
-from presentation.api import (
-    cover_router,
-    image_router,
-    manga_router,
-    media_arts_router,
-    neo4j_router,
-    text_generation_router,
-)
+from presentation.api import (cover_router, image_router, manga_anime_router,
+                              manga_router, media_arts_router, neo4j_router,
+                              text_generation_router)
 
 app = FastAPI(title="Manga Graph API", version="1.0.0")
 
@@ -61,6 +56,7 @@ router_deps = [Depends(get_api_key)]
 app.include_router(manga_router, dependencies=router_deps)
 app.include_router(media_arts_router, dependencies=router_deps)
 app.include_router(neo4j_router, dependencies=router_deps)
+app.include_router(manga_anime_router, dependencies=router_deps)
 app.include_router(cover_router, dependencies=router_deps)
 app.include_router(image_router, dependencies=router_deps)
 app.include_router(text_generation_router, dependencies=router_deps)

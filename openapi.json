@@ -1219,6 +1219,690 @@
         }
       }
     },
+    "/api/v1/manga-anime-neo4j/graph": {
+      "get": {
+        "tags": [
+          "manga-anime-neo4j"
+        ],
+        "summary": "Get Manga Anime Graph",
+        "description": "Retrieve a slice of the manga_anime_list graph with selectable search mode and language.",
+        "operationId": "get_manga_anime_graph_api_v1_manga_anime_neo4j_graph_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "検索キーワード",
+              "title": "Q"
+            },
+            "description": "検索キーワード"
+          },
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(english|japanese)$",
+              "description": "検索対象のタイトル言語",
+              "default": "english",
+              "title": "Lang"
+            },
+            "description": "検索対象のタイトル言語"
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(simple|fulltext|ranked)$",
+              "description": "simple:部分一致 / fulltext:Lucene fuzzy / ranked:再ランク",
+              "default": "simple",
+              "title": "Mode"
+            },
+            "description": "simple:部分一致 / fulltext:Lucene fuzzy / ranked:再ランク"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "取得するWork数の上限",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "取得するWork数の上限"
+          },
+          {
+            "name": "include_hentai",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "genresに\"Hentai\"を含む作品も含めるか",
+              "default": false,
+              "title": "Include Hentai"
+            },
+            "description": "genresに\"Hentai\"を含む作品も含めるか"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/manga-anime-neo4j/vector/title": {
+      "get": {
+        "tags": [
+          "manga-anime-neo4j"
+        ],
+        "summary": "Get Manga Anime Title Vector",
+        "operationId": "get_manga_anime_title_vector_api_v1_manga_anime_neo4j_vector_title_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "タイトルで類似検索するクエリテキスト",
+              "title": "Q"
+            },
+            "description": "タイトルで類似検索するクエリテキスト"
+          },
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(english|japanese)$",
+              "description": "使用するタイトル埋め込み",
+              "default": "english",
+              "title": "Lang"
+            },
+            "description": "使用するタイトル埋め込み"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "取得件数",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "取得件数"
+          },
+          {
+            "name": "include_hentai",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "genresに\"Hentai\"を含む作品も含めるか",
+              "default": false,
+              "title": "Include Hentai"
+            },
+            "description": "genresに\"Hentai\"を含む作品も含めるか"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/manga-anime-neo4j/vector/description": {
+      "get": {
+        "tags": [
+          "manga-anime-neo4j"
+        ],
+        "summary": "Get Manga Anime Description Vector",
+        "operationId": "get_manga_anime_description_vector_api_v1_manga_anime_neo4j_vector_description_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "作品説明で類似検索するクエリテキスト",
+              "title": "Q"
+            },
+            "description": "作品説明で類似検索するクエリテキスト"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "取得件数",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "取得件数"
+          },
+          {
+            "name": "include_hentai",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "genresに\"Hentai\"を含む作品も含めるか",
+              "default": false,
+              "title": "Include Hentai"
+            },
+            "description": "genresに\"Hentai\"を含む作品も含めるか"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/manga-anime-neo4j/work/{work_id}": {
+      "get": {
+        "tags": [
+          "manga-anime-neo4j"
+        ],
+        "summary": "Get Manga Anime Work Subgraph",
+        "description": "Fetch a focused subgraph for a specific work ID.",
+        "operationId": "get_manga_anime_work_subgraph_api_v1_manga_anime_neo4j_work__work_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "work_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Work Id"
+            }
+          },
+          {
+            "name": "include_hentai",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "genresに\"Hentai\"を含む作品も含めるか",
+              "default": false,
+              "title": "Include Hentai"
+            },
+            "description": "genresに\"Hentai\"を含む作品も含めるか"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/manga-anime-neo4j/author/{author_node_id}/works": {
+      "get": {
+        "tags": [
+          "manga-anime-neo4j"
+        ],
+        "summary": "Get Author Related Works",
+        "description": "Return other works created by the specified Author node (elementId).",
+        "operationId": "get_author_related_works_api_v1_manga_anime_neo4j_author__author_node_id__works_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "author_node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Author Node Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "取得する作品数の上限",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "取得する作品数の上限"
+          },
+          {
+            "name": "include_hentai",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "genresに\"Hentai\"を含む作品も含めるか",
+              "default": false,
+              "title": "Include Hentai"
+            },
+            "description": "genresに\"Hentai\"を含む作品も含めるか"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/manga-anime-neo4j/magazine/{magazine_node_id}/works": {
+      "get": {
+        "tags": [
+          "manga-anime-neo4j"
+        ],
+        "summary": "Get Magazine Related Works",
+        "description": "Return works that are published in the specified Magazine node (elementId).\n\nIf reference_work_id is provided, results are sorted by similarity:\n1. Same demographic (full match > partial match)\n2. Overlapping themes (more overlap = higher priority)\n3. Publishing date overlap (Jaccard similarity)",
+        "operationId": "get_magazine_related_works_api_v1_manga_anime_neo4j_magazine__magazine_node_id__works_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "magazine_node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Magazine Node Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "取得する作品数の上限",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "取得する作品数の上限"
+          },
+          {
+            "name": "include_hentai",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "genresに\"Hentai\"を含む作品も含めるか",
+              "default": false,
+              "title": "Include Hentai"
+            },
+            "description": "genresに\"Hentai\"を含む作品も含めるか"
+          },
+          {
+            "name": "reference_work_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "基準となる作品のID。指定すると demographic > themes > publishing_date の優先順位でソート",
+              "title": "Reference Work Id"
+            },
+            "description": "基準となる作品のID。指定すると demographic > themes > publishing_date の優先順位でソート"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/manga-anime-neo4j/publisher/{publisher_node_id}/magazines": {
+      "get": {
+        "tags": [
+          "manga-anime-neo4j"
+        ],
+        "summary": "Get Publisher Magazines",
+        "description": "Return other magazines managed by the specified Publisher node.",
+        "operationId": "get_publisher_magazines_api_v1_manga_anime_neo4j_publisher__publisher_node_id__magazines_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "publisher_node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Publisher Node Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "取得する雑誌数の上限",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "取得する雑誌数の上限"
+          },
+          {
+            "name": "exclude_magazine_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "除外したい雑誌ノードの elementId (任意)",
+              "title": "Exclude Magazine Id"
+            },
+            "description": "除外したい雑誌ノードの elementId (任意)"
+          },
+          {
+            "name": "include_hentai",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "genresに\"Hentai\"を含む作品も含めるか",
+              "default": false,
+              "title": "Include Hentai"
+            },
+            "description": "genresに\"Hentai\"を含む作品も含めるか"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/manga-anime-neo4j/magazines/work-graph": {
+      "post": {
+        "tags": [
+          "manga-anime-neo4j"
+        ],
+        "summary": "Get Magazines Work Graph",
+        "description": "Return works connected to the supplied magazine elementIds.\n\nIf reference_work_id is provided in the request, results are sorted by similarity:\n1. Same demographic (full match > partial match)\n2. Overlapping themes (more overlap = higher priority)\n3. Publishing date overlap (Jaccard similarity)",
+        "operationId": "get_magazines_work_graph_api_v1_manga_anime_neo4j_magazines_work_graph_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MagazineWorkGraphRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/v1/manga-anime-neo4j/vector/similarity": {
+      "post": {
+        "tags": [
+          "manga-anime-neo4j"
+        ],
+        "summary": "Search Similar By Embedding",
+        "description": "クエリテキストから埋め込みベクトルを生成し、Neo4jに格納されたWorkノードの\nembedding_title_ja, embedding_title_en, embedding_description から類似度検索を行います。\n\n- embedding_type: \"title_ja\", \"title_en\", \"description\" から選択\n- embedding_dims: jina-embeddings-v4のMatryoshka dimensions (128, 256, 512, 1024, 2048)\n- limit: 返却件数（デフォルト5、最大100）\n- threshold: 類似度閾値（デフォルト0.5、範囲0.0〜1.0）\n- include_hentai: Hentaiジャンルを含めるか",
+        "operationId": "search_similar_by_embedding_api_v1_manga_anime_neo4j_vector_similarity_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbeddingSimilaritySearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbeddingSimilaritySearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
     "/api/v1/covers/work/{work_id}": {
       "get": {
         "tags": [
@@ -1981,6 +2665,164 @@
         ],
         "title": "EdgeData"
       },
+      "EmbeddingSimilaritySearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "embedding_type": {
+            "type": "string",
+            "title": "Embedding Type",
+            "default": "title_ja"
+          },
+          "embedding_dims": {
+            "type": "integer",
+            "title": "Embedding Dims",
+            "default": 256
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "default": 5
+          },
+          "threshold": {
+            "type": "number",
+            "title": "Threshold",
+            "default": 0.5
+          },
+          "include_hentai": {
+            "type": "boolean",
+            "title": "Include Hentai",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "EmbeddingSimilaritySearchRequest",
+        "description": "類似度検索APIのリクエストスキーマ"
+      },
+      "EmbeddingSimilaritySearchResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/EmbeddingSimilaritySearchResultItem"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "embedding_type": {
+            "type": "string",
+            "title": "Embedding Type"
+          },
+          "embedding_dims": {
+            "type": "integer",
+            "title": "Embedding Dims"
+          },
+          "threshold": {
+            "type": "number",
+            "title": "Threshold"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results",
+          "total",
+          "query",
+          "embedding_type",
+          "embedding_dims",
+          "threshold"
+        ],
+        "title": "EmbeddingSimilaritySearchResponse",
+        "description": "類似度検索APIのレスポンススキーマ"
+      },
+      "EmbeddingSimilaritySearchResultItem": {
+        "properties": {
+          "work_id": {
+            "type": "string",
+            "title": "Work Id"
+          },
+          "title_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title En"
+          },
+          "title_ja": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title Ja"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "similarity_score": {
+            "type": "number",
+            "title": "Similarity Score"
+          },
+          "media_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Media Type"
+          },
+          "genres": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Genres"
+          }
+        },
+        "type": "object",
+        "required": [
+          "work_id",
+          "similarity_score"
+        ],
+        "title": "EmbeddingSimilaritySearchResultItem",
+        "description": "類似度検索結果の1件"
+      },
       "GraphResponse": {
         "properties": {
           "nodes": {
@@ -2123,6 +2965,57 @@
           "publisher"
         ],
         "title": "MagazineResponse"
+      },
+      "MagazineWorkGraphRequest": {
+        "properties": {
+          "magazine_element_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Magazine Element Ids"
+          },
+          "work_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Limit",
+            "default": 50
+          },
+          "include_hentai": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Hentai",
+            "default": false
+          },
+          "reference_work_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Work Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "magazine_element_ids"
+        ],
+        "title": "MagazineWorkGraphRequest"
       },
       "NodeData": {
         "properties": {

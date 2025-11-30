@@ -69,6 +69,13 @@ class GraphResponse(BaseModel):
     total_edges: int
 
 
+class MagazineWorkGraphRequest(BaseModel):
+    magazine_element_ids: List[str]
+    work_limit: Optional[int] = 50
+    include_hentai: Optional[bool] = False
+    reference_work_id: Optional[str] = None  # For priority-based sorting
+
+
 class AuthorResponse(BaseModel):
     id: str
     name: str
@@ -157,3 +164,37 @@ class TitleSimilarityItem(BaseModel):
 class TitleSimilarityResponse(BaseModel):
     results: List[TitleSimilarityItem]
     total: int
+
+
+class EmbeddingSimilaritySearchRequest(BaseModel):
+    """類似度検索APIのリクエストスキーマ"""
+
+    query: str
+    embedding_type: str = "title_ja"  # "title_ja", "title_en", "description"
+    embedding_dims: int = 256  # Matryoshka dimensions: 128, 256, 512, 1024, 2048
+    limit: int = 5  # 返却件数
+    threshold: float = 0.5  # 類似度閾値（コサイン類似度）
+    include_hentai: bool = False
+
+
+class EmbeddingSimilaritySearchResultItem(BaseModel):
+    """類似度検索結果の1件"""
+
+    work_id: str
+    title_en: Optional[str] = None
+    title_ja: Optional[str] = None
+    description: Optional[str] = None
+    similarity_score: float
+    media_type: Optional[str] = None
+    genres: Optional[List[str]] = None
+
+
+class EmbeddingSimilaritySearchResponse(BaseModel):
+    """類似度検索APIのレスポンススキーマ"""
+
+    results: List[EmbeddingSimilaritySearchResultItem]
+    total: int
+    query: str
+    embedding_type: str
+    embedding_dims: int
+    threshold: float

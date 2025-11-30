@@ -8,16 +8,25 @@ Usage:
     # 実行
     uv run python scripts/migrate_to_aura.py
     
-    # 途中から再開する場合（例: ノード76800から）
-    uv run python scripts/migrate_to_aura.py --resume-from 76800
+    # 途中から再開する場合
+    uv run python scripts/migrate_to_aura.py --resume
+    
+    # リレーションシップのみ再インポート
+    uv run python scripts/migrate_to_aura.py --relationships-only
+    
+    # Auraをクリアして最初から
+    uv run python scripts/migrate_to_aura.py --clear
 """
 
 import argparse
 import os
 import uuid
 
+from dotenv import load_dotenv
 from neo4j import GraphDatabase
 from tqdm import tqdm
+
+load_dotenv()
 
 # ローカル接続設定
 LOCAL_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
@@ -50,6 +59,12 @@ def export_relationships(local_session):
         MATCH (a)-[r]->(b)
         RETURN elementId(a) AS a_element_id,
                elementId(b) AS b_element_id,
+               a.id AS a_id,
+               b.id AS b_id,
+               a.name AS a_name,
+               b.name AS b_name,
+               labels(a) AS a_labels,
+               labels(b) AS b_labels,
                type(r) AS rel_type,
                properties(r) AS rel_props
     """)
@@ -97,6 +112,7 @@ def import_nodes(aura_session, nodes, element_id_map, resume_from=0):
 def import_relationships(aura_session, relationships, element_id_map):
     """Import relationships to Aura in batches."""
     failed_count = 0
+    success_count = 0
     
     for i in tqdm(range(0, len(relationships), BATCH_SIZE), desc="Importing relationships"):
         batch = relationships[i:i + BATCH_SIZE]
@@ -117,9 +133,98 @@ def import_relationships(aura_session, relationships, element_id_map):
                 CREATE (a)-[r:{rel_type}]->(b)
                 SET r = $rel_props
             """, a_id=a_new_id, b_id=b_new_id, rel_props=rel_props)
+            success_count += 1
     
+    print(f"\n  Successfully imported: {success_count} relationships")
     if failed_count > 0:
-        print(f"\n  Warning: {failed_count} relationships skipped (missing nodes)")
+        print(f"  Warning: {failed_count} relationships skipped (missing nodes)")
+
+
+def import_relationships_by_id(aura_session, relationships):
+    """Import relationships to Aura using node id or name property.
+    
+    This is useful when re-importing relationships after duplicate cleanup,
+    where the elementId mapping is no longer valid.
+    
+    - Work nodes: matched by 'id' property
+    - Author/Magazine/Publisher nodes: matched by 'name' property
+    """
+    failed_count = 0
+    success_count = 0
+    error_samples = []
+    
+    for i in tqdm(range(0, len(relationships), BATCH_SIZE), desc="Importing relationships"):
+        batch = relationships[i:i + BATCH_SIZE]
+        for rel in batch:
+            a_id = rel.get("a_id")
+            b_id = rel.get("b_id")
+            a_name = rel.get("a_name")
+            b_name = rel.get("b_name")
+            a_labels = rel.get("a_labels", [])
+            b_labels = rel.get("b_labels", [])
+            
+            a_label = a_labels[0] if a_labels else "Node"
+            b_label = b_labels[0] if b_labels else "Node"
+            
+            rel_type = rel["rel_type"]
+            rel_props = rel["rel_props"] or {}
+            
+            # マッチング条件を決定
+            # Work は id で、それ以外は name でマッチング
+            if a_label == "Work":
+                if a_id is None:
+                    failed_count += 1
+                    continue
+                a_match = f"(a:{a_label} {{id: $a_id}})"
+                a_params = {"a_id": a_id}
+            else:
+                if a_name is None:
+                    failed_count += 1
+                    continue
+                a_match = f"(a:{a_label} {{name: $a_name}})"
+                a_params = {"a_name": a_name}
+            
+            if b_label == "Work":
+                if b_id is None:
+                    failed_count += 1
+                    continue
+                b_match = f"(b:{b_label} {{id: $b_id}})"
+                b_params = {"b_id": b_id}
+            else:
+                if b_name is None:
+                    failed_count += 1
+                    continue
+                b_match = f"(b:{b_label} {{name: $b_name}})"
+                b_params = {"b_name": b_name}
+            
+            try:
+                query = f"""
+                    MATCH {a_match}
+                    MATCH {b_match}
+                    MERGE (a)-[r:{rel_type}]->(b)
+                    SET r = $rel_props
+                    RETURN count(r) AS created
+                """
+                params = {**a_params, **b_params, "rel_props": rel_props}
+                
+                result = aura_session.run(query, **params)
+                record = result.single()
+                if record and record["created"] > 0:
+                    success_count += 1
+                else:
+                    failed_count += 1
+            except Exception as e:
+                failed_count += 1
+                if len(error_samples) < 3:
+                    error_samples.append(f"{a_label}({a_id or a_name})-[{rel_type}]->{b_label}({b_id or b_name}): {e}")
+    
+    print(f"\n  Successfully imported: {success_count} relationships")
+    if failed_count > 0:
+        print(f"  Warning: {failed_count} relationships skipped (missing nodes or errors)")
+    if error_samples:
+        print("  Error samples:")
+        for sample in error_samples:
+            print(f"    {sample}")
 
 
 def cleanup_migration_ids(aura_session):
@@ -158,6 +263,29 @@ def count_aura_nodes(aura_session):
     return result.single()["count"]
 
 
+def count_aura_relationships(aura_session):
+    """Count existing relationships in Aura."""
+    result = aura_session.run("MATCH ()-[r]->() RETURN count(r) AS count")
+    return result.single()["count"]
+
+
+def clear_aura_relationships(aura_session):
+    """Clear all relationships in Aura database (keep nodes)."""
+    print("Clearing relationships in Aura...")
+    while True:
+        result = aura_session.run("""
+            MATCH ()-[r]->()
+            WITH r LIMIT 10000
+            DELETE r
+            RETURN count(*) AS deleted
+        """)
+        deleted = result.single()["deleted"]
+        if deleted == 0:
+            break
+        print(f"  Deleted {deleted} relationships...")
+    print("All relationships cleared.")
+
+
 def clear_aura_database(aura_session):
     """Clear all data in Aura database."""
     print("Clearing Aura database...")
@@ -182,8 +310,12 @@ def main():
                         help="Resume from where it left off (uses existing Aura data)")
     parser.add_argument("--skip-relationships", action="store_true",
                         help="Skip importing relationships (for testing)")
+    parser.add_argument("--relationships-only", action="store_true",
+                        help="Only import relationships (skip nodes). Uses id property for matching.")
     parser.add_argument("--clear", action="store_true",
                         help="Clear Aura database before migration")
+    parser.add_argument("--clear-relationships", action="store_true",
+                        help="Clear only relationships before re-importing")
     args = parser.parse_args()
 
     # 接続確認
@@ -202,7 +334,48 @@ def main():
         if args.clear:
             with aura_driver.session() as session:
                 clear_aura_database(session)
+        
+        # リレーションシップのみクリア
+        if args.clear_relationships:
+            with aura_driver.session() as session:
+                clear_aura_relationships(session)
 
+        # リレーションシップのみインポートモード
+        if args.relationships_only:
+            print("=" * 60)
+            print("Relationships-only import mode")
+            print("=" * 60)
+            
+            # Auraの現在の状態を表示
+            with aura_driver.session() as session:
+                node_count = count_aura_nodes(session)
+                rel_count = count_aura_relationships(session)
+                print(f"\nCurrent Aura status:")
+                print(f"  Nodes: {node_count}")
+                print(f"  Relationships: {rel_count}")
+            
+            # ローカルからリレーションシップをエクスポート
+            print("\nExporting relationships from local Neo4j...")
+            with local_driver.session() as session:
+                relationships = export_relationships(session)
+            print(f"  Relationships to import: {len(relationships)}")
+            
+            # リレーションシップをインポート（idベースで）
+            print("\nImporting relationships to Aura (using id property)...")
+            with aura_driver.session() as session:
+                import_relationships_by_id(session, relationships)
+            
+            # 最終状態を表示
+            with aura_driver.session() as session:
+                new_rel_count = count_aura_relationships(session)
+                print(f"\nFinal Aura status:")
+                print(f"  Nodes: {node_count}")
+                print(f"  Relationships: {new_rel_count}")
+            
+            print("\nRelationship import completed!")
+            return
+
+        # 通常のマイグレーション
         # ローカルからエクスポート
         print("Exporting from local Neo4j...")
         with local_driver.session() as session:

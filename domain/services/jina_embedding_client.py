@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import threading
+import time
+from collections import OrderedDict
 from typing import List, Optional
 
 import numpy as np
@@ -32,6 +34,11 @@ class JinaEmbeddingClient:
             model_kwargs={"default_task": "retrieval"},
         )
         print(f"Loaded JinaEmbeddingClient model '{self.model_name}' on device '{self.device}'")
+        # Simple in-memory LRU cache for embeddings to avoid repeated expensive encodes
+        cache_size = int(os.getenv("JINA_EMBEDDING_CACHE_SIZE", "1024"))
+        self._cache = OrderedDict()
+        self._cache_size = cache_size
+        self._cache_lock = threading.Lock()
 
     @classmethod
     def get_instance(cls) -> "JinaEmbeddingClient":
@@ -46,13 +53,34 @@ class JinaEmbeddingClient:
         normalized = (text or "").strip()
         if not normalized:
             return None
+        # Check cache first
+        key = normalized
+        with self._cache_lock:
+            if key in self._cache:
+                # move to end (most recently used)
+                vec = self._cache.pop(key)
+                self._cache[key] = vec
+                return vec.copy()
+
+        start = time.time()
         vector = self.model.encode(
             [normalized],
             batch_size=1,
             convert_to_numpy=True,
             normalize_embeddings=True,
         )[0]
-        return vector.astype(np.float32)
+        duration = time.time() - start
+        print(f"JinaEmbeddingClient.encode: computed embedding for '{normalized[:40]}' in {duration:.3f}s")
+
+        arr = vector.astype(np.float32)
+        with self._cache_lock:
+            # insert into cache
+            self._cache[key] = arr
+            # enforce size
+            while len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)
+
+        return arr.copy()
 
     def encode_batch(self, texts: List[str]) -> np.ndarray:
         """Batch encode texts, skipping normalization outside of model."""

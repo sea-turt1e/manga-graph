@@ -24,7 +24,11 @@ from presentation.schemas import (AddEmbeddingRequest, AuthorResponse,
                                   EmbeddingSimilaritySearchResultItem,
                                   GraphResponse, ImageFetchRequest,
                                   ImageFetchResponse, MagazineResponse,
-                                  MagazineWorkGraphRequest, SearchRequest,
+                                  MagazineWorkGraphRequest,
+                                  MultiEmbeddingSimilaritySearchRequest,
+                                  MultiEmbeddingSimilaritySearchResponse,
+                                  RelatedGraphBatchRequest,
+                                  RelatedGraphBatchResponse, SearchRequest,
                                   SynopsisVectorSearchRequest,
                                   SynopsisVectorSearchResponse,
                                   SynopsisVectorSearchResponseItem,
@@ -523,6 +527,50 @@ async def get_manga_anime_graph_japanese(
     )
 
 
+@manga_anime_router.get("/graph/cascade", response_model=GraphResponse)
+async def get_manga_anime_graph_cascade(
+    q: Optional[str] = Query(None, description="検索キーワード"),
+    limit: int = Query(3, description="取得するWork数の上限", ge=1, le=100),
+    languages: str = Query(
+        "japanese,english",
+        description="検索する言語の優先順位（カンマ区切り）。例: 'japanese,english' または 'english'",
+    ),
+    include_hentai: bool = Query(False, description='genresに"Hentai"を含む作品も含めるか'),
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Cascade search: Try ranked then simple for each language until results are found.
+
+    This endpoint consolidates multiple graph search calls into a single API request.
+    For each language in order, it tries:
+    1. ranked mode (fulltext + Levenshtein re-ranking)
+    2. simple mode (substring match) as fallback
+
+    Returns as soon as results are found, avoiding unnecessary API calls.
+    """
+    try:
+        # Parse languages from comma-separated string
+        lang_list = [lang.strip() for lang in languages.split(",") if lang.strip()]
+        valid_langs = [lang for lang in lang_list if lang in ("english", "japanese")]
+
+        if not valid_langs:
+            valid_langs = ["japanese", "english"]
+
+        graph_data = service.fetch_graph_cascade(
+            query=q,
+            limit=limit,
+            languages=valid_langs,  # type: ignore[arg-type]
+            include_hentai=include_hentai,
+        )
+        _strip_embedding_fields(graph_data)
+        return _graph_response_from_data(graph_data)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @manga_anime_router.get("/vector/title", response_model=GraphResponse)
 async def get_manga_anime_title_vector(
     q: str = Query(..., description="タイトルで類似検索するクエリテキスト"),
@@ -664,6 +712,82 @@ async def get_publisher_magazines(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@manga_anime_router.post("/related-graphs/batch", response_model=RelatedGraphBatchResponse)
+async def get_related_graphs_batch(
+    request: RelatedGraphBatchRequest,
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """Fetch author, magazine, and publisher related graphs in a single API call.
+
+    This endpoint consolidates multiple graph queries (11-13 in the original flow):
+    - Author related works (step 11)
+    - Magazine related works (step 12)
+    - Publisher magazines (step 13)
+
+    All requested graphs are fetched in a single database session, reducing
+    round-trips and improving performance.
+
+    At least one of author_node_id, magazine_node_id, or publisher_node_id must be provided.
+    """
+    # Validate that at least one ID is provided
+    if not any([request.author_node_id, request.magazine_node_id, request.publisher_node_id]):
+        raise HTTPException(
+            status_code=400,
+            detail="At least one of author_node_id, magazine_node_id, or publisher_node_id must be provided",
+        )
+
+    # Validate limits
+    if request.author_limit < 1 or request.author_limit > 100:
+        raise HTTPException(status_code=400, detail="author_limit must be between 1 and 100")
+    if request.magazine_limit < 1 or request.magazine_limit > 100:
+        raise HTTPException(status_code=400, detail="magazine_limit must be between 1 and 100")
+    if request.publisher_limit < 1 or request.publisher_limit > 100:
+        raise HTTPException(status_code=400, detail="publisher_limit must be between 1 and 100")
+
+    try:
+        # Fetch all graphs in a single call
+        results = service.fetch_related_graphs_batch(
+            author_element_id=request.author_node_id,
+            magazine_element_id=request.magazine_node_id,
+            publisher_element_id=request.publisher_node_id,
+            author_limit=request.author_limit,
+            magazine_limit=request.magazine_limit,
+            publisher_limit=request.publisher_limit,
+            reference_work_id=request.reference_work_id,
+            exclude_magazine_id=request.exclude_magazine_id,
+            include_hentai=request.include_hentai,
+        )
+
+        # Convert to response format
+        author_graph = None
+        if results["author_graph"]:
+            _strip_embedding_fields(results["author_graph"])
+            author_graph = _graph_response_from_data(results["author_graph"])
+
+        magazine_graph = None
+        if results["magazine_graph"]:
+            _strip_embedding_fields(results["magazine_graph"])
+            magazine_graph = _graph_response_from_data(results["magazine_graph"])
+
+        publisher_graph = None
+        if results["publisher_graph"]:
+            _strip_embedding_fields(results["publisher_graph"])
+            publisher_graph = _graph_response_from_data(results["publisher_graph"])
+
+        return RelatedGraphBatchResponse(
+            author_graph=author_graph,
+            magazine_graph=magazine_graph,
+            publisher_graph=publisher_graph,
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @manga_anime_router.post("/magazines/work-graph", response_model=GraphResponse)
 async def get_magazines_work_graph(
     request: MagazineWorkGraphRequest,
@@ -791,6 +915,108 @@ async def search_similar_by_embedding(
             total=len(items),
             query=request.query,
             embedding_type=request.embedding_type,
+            embedding_dims=request.embedding_dims,
+            threshold=request.threshold,
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@manga_anime_router.post("/vector/similarity/multi", response_model=MultiEmbeddingSimilaritySearchResponse)
+async def search_similar_by_embedding_multi(
+    request: MultiEmbeddingSimilaritySearchRequest,
+    service: MangaAnimeNeo4jService = Depends(get_manga_anime_service),
+):
+    """
+    複数の埋め込みタイプ（title_en, title_ja, description）で並列に類似度検索を行い、
+    結果をマージして返します。
+
+    これにより、フロントエンドで複数回のAPIコールを行う必要がなくなります。
+    同一作品が複数の埋め込みタイプでヒットした場合、最も高い類似度スコアが採用されます。
+
+    - embedding_types: 検索対象の埋め込みタイプリスト（デフォルト: ["title_en", "title_ja"]）
+    - embedding_dims: jina-embeddings-v4のMatryoshka dimensions (128, 256, 512, 1024, 2048)
+    - limit: 返却件数（デフォルト10、最大100）
+    - threshold: 類似度閾値（デフォルト0.3、範囲0.0〜1.0）
+    - include_hentai: Hentaiジャンルを含めるか
+    """
+    # Validate embedding_types
+    valid_types = {"title_ja", "title_en", "description"}
+    invalid_types = [t for t in request.embedding_types if t not in valid_types]
+    if invalid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid embedding_types: {invalid_types}. Must be one of: {list(valid_types)}",
+        )
+
+    if not request.embedding_types:
+        raise HTTPException(status_code=400, detail="embedding_types cannot be empty")
+
+    # Validate embedding_dims
+    if request.embedding_dims not in VALID_EMBEDDING_DIMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"embedding_dims must be one of: {sorted(VALID_EMBEDDING_DIMS)}",
+        )
+
+    # Validate limit
+    if request.limit < 1 or request.limit > 100:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
+
+    # Validate threshold
+    if request.threshold < 0.0 or request.threshold > 1.0:
+        raise HTTPException(status_code=400, detail="threshold must be between 0.0 and 1.0")
+
+    # Validate query
+    if not request.query or not request.query.strip():
+        raise HTTPException(status_code=400, detail="query cannot be empty")
+
+    try:
+        # Generate embedding from query text
+        client = get_jina_embedding_client()
+        vector = client.encode(request.query)
+        if vector is None:
+            raise HTTPException(status_code=400, detail="Failed to generate embedding for query")
+
+        # Truncate to requested dimensions
+        query_embedding = JinaEmbeddingClient.truncate(vector, request.embedding_dims)
+
+        # Convert embedding_types to property_names
+        property_names = [EMBEDDING_TYPE_TO_PROPERTY[t] for t in request.embedding_types]
+
+        # Search similar works across multiple embedding types
+        results = service.search_similar_works_multi(
+            query_embedding=query_embedding,
+            property_names=property_names,  # type: ignore[arg-type]
+            limit=request.limit,
+            threshold=request.threshold,
+            include_hentai=request.include_hentai,
+        )
+
+        # Convert to response items
+        items = [
+            EmbeddingSimilaritySearchResultItem(
+                work_id=r["work_id"],
+                title_en=r.get("title_en"),
+                title_ja=r.get("title_ja"),
+                description=r.get("description"),
+                similarity_score=r["similarity_score"],
+                media_type=r.get("media_type"),
+                genres=r.get("genres"),
+            )
+            for r in results
+        ]
+
+        return MultiEmbeddingSimilaritySearchResponse(
+            results=items,
+            total=len(items),
+            query=request.query,
+            embedding_types=request.embedding_types,
             embedding_dims=request.embedding_dims,
             threshold=request.threshold,
         )

@@ -231,6 +231,192 @@ class MangaAnimeNeo4jService:
 
         return self._convert_to_graph(record, include_hentai=include_hentai)
 
+    def fetch_graph_cascade(
+        self,
+        query: Optional[str],
+        limit: int = 3,
+        *,
+        languages: Optional[List[SearchLanguage]] = None,
+        include_hentai: bool = False,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Cascade search: Try ranked → fulltext → simple for each language.
+
+        This method attempts to find works using the following strategy:
+        For each language in order:
+        1. Try 'ranked' mode (fulltext + Levenshtein re-ranking) - highest precision
+        2. Try 'fulltext' mode (Lucene fuzzy) - catches cases filtered by ranked threshold
+        3. Try 'simple' mode (substring match) - final fallback for exact matches
+
+        Returns as soon as results are found.
+
+        This consolidates multiple API calls into a single endpoint for efficiency.
+
+        Args:
+            query: Search term (title or partial title)
+            limit: Maximum number of works to return
+            languages: List of languages to search, defaults to ["japanese", "english"]
+            include_hentai: Whether to include hentai content
+
+        Returns:
+            Graph data with nodes and edges
+        """
+        if languages is None:
+            languages = ["japanese", "english"]
+
+        # Define search modes in priority order
+        search_modes: List[SearchMode] = ["ranked", "fulltext", "simple"]
+
+        for lang in languages:
+            for mode in search_modes:
+                result = self.fetch_graph(
+                    query=query,
+                    limit=limit,
+                    language=lang,
+                    mode=mode,
+                    include_hentai=include_hentai,
+                )
+                if result.get("nodes"):
+                    logger.debug("Cascade search found results with %s mode (lang=%s)", mode, lang)
+                    return result
+
+        logger.debug("Cascade search found no results for query: %s", query)
+        return {"nodes": [], "edges": []}
+
+    def search_similar_works_multi(
+        self,
+        query_embedding: List[float],
+        *,
+        property_names: List[VectorProperty],
+        limit: int = 10,
+        threshold: float = 0.3,
+        include_hentai: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        Run cosine similarity search against multiple embedding properties in parallel.
+
+        Searches against all specified embedding properties and returns merged,
+        deduplicated results sorted by similarity score.
+
+        Args:
+            query_embedding: The query vector
+            property_names: List of embedding properties to search (e.g., ["embedding_title_en", "embedding_title_ja"])
+            limit: Maximum number of results to return
+            threshold: Minimum similarity score
+            include_hentai: Whether to include hentai content
+
+        Returns:
+            Merged and deduplicated list of work dictionaries with similarity scores
+        """
+        all_results: Dict[str, Dict[str, Any]] = {}
+
+        with self.driver.session() as session:
+            for property_name in property_names:
+                if property_name not in {"embedding_title_en", "embedding_title_ja", "embedding_description"}:
+                    logger.warning("Skipping unsupported embedding property: %s", property_name)
+                    continue
+
+                try:
+                    records = session.read_transaction(
+                        self._vector_similarity_search_tx,
+                        property_name,
+                        query_embedding,
+                        limit,
+                        threshold,
+                        include_hentai,
+                    )
+
+                    # Merge results, keeping the highest similarity score for each work
+                    for record in records:
+                        work_id = record["work_id"]
+                        if work_id not in all_results or record["similarity_score"] > all_results[work_id]["similarity_score"]:
+                            all_results[work_id] = record
+
+                except Exception as exc:
+                    logger.warning("Error searching %s: %s", property_name, exc)
+                    continue
+
+        # Sort by similarity score and limit results
+        sorted_results = sorted(all_results.values(), key=lambda x: x["similarity_score"], reverse=True)
+        return sorted_results[:limit]
+
+    def fetch_related_graphs_batch(
+        self,
+        *,
+        author_element_id: Optional[str] = None,
+        magazine_element_id: Optional[str] = None,
+        publisher_element_id: Optional[str] = None,
+        author_limit: int = 5,
+        magazine_limit: int = 5,
+        publisher_limit: int = 3,
+        reference_work_id: Optional[str] = None,
+        exclude_magazine_id: Optional[str] = None,
+        include_hentai: bool = False,
+    ) -> Dict[str, Optional[Dict[str, List[Dict[str, Any]]]]]:
+        """Fetch author, magazine, and publisher related graphs in a single session.
+
+        This method consolidates multiple graph queries into a single API call,
+        reducing round-trips and improving performance.
+
+        Args:
+            author_element_id: Author node elementId (optional)
+            magazine_element_id: Magazine node elementId (optional)
+            publisher_element_id: Publisher node elementId (optional)
+            author_limit: Max works to return for author
+            magazine_limit: Max works to return for magazine
+            publisher_limit: Max magazines to return for publisher
+            reference_work_id: Reference work for magazine sorting
+            exclude_magazine_id: Magazine to exclude from publisher results
+            include_hentai: Whether to include hentai content
+
+        Returns:
+            Dict with keys 'author_graph', 'magazine_graph', 'publisher_graph'
+            Each value is either a graph dict or None if not requested
+        """
+        results: Dict[str, Optional[Dict[str, List[Dict[str, Any]]]]] = {
+            "author_graph": None,
+            "magazine_graph": None,
+            "publisher_graph": None,
+        }
+
+        with self.driver.session() as session:
+            # Fetch author related works
+            if author_element_id:
+                try:
+                    record = session.read_transaction(
+                        self._fetch_author_related_works_tx, author_element_id, author_limit
+                    )
+                    results["author_graph"] = self._convert_to_graph(record, include_hentai=include_hentai)
+                    logger.debug("Fetched author graph for %s", author_element_id)
+                except Exception as exc:
+                    logger.warning("Error fetching author graph: %s", exc)
+
+            # Fetch magazine related works
+            if magazine_element_id:
+                try:
+                    record = session.read_transaction(
+                        self._fetch_magazine_related_works_tx, magazine_element_id, magazine_limit, reference_work_id
+                    )
+                    results["magazine_graph"] = self._convert_to_graph(record, include_hentai=include_hentai)
+                    logger.debug("Fetched magazine graph for %s", magazine_element_id)
+                except Exception as exc:
+                    logger.warning("Error fetching magazine graph: %s", exc)
+
+            # Fetch publisher magazines
+            if publisher_element_id:
+                try:
+                    record = session.read_transaction(
+                        self._fetch_publisher_magazines_tx,
+                        publisher_element_id,
+                        publisher_limit,
+                        exclude_magazine_id,
+                    )
+                    results["publisher_graph"] = self._convert_to_graph(record, include_hentai=include_hentai)
+                    logger.debug("Fetched publisher graph for %s", publisher_element_id)
+                except Exception as exc:
+                    logger.warning("Error fetching publisher graph: %s", exc)
+
+        return results
+
     def close(self) -> None:
         if self.driver:
             self.driver.close()

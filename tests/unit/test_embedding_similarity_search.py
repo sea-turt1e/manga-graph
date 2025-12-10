@@ -157,44 +157,44 @@ class TestEmbeddingSimilarityAPIValidation:
 
 
 class TestJinaEmbeddingClientTruncate:
-    """Test cases for JinaEmbeddingClient.truncate"""
+    """Test cases for BaseEmbeddingClient.truncate"""
 
     @pytest.mark.skipif(True, reason="Requires torch/sentence-transformers")
     def test_truncate_valid_dims(self):
         """Test truncation with valid dimensions"""
-        from domain.services.jina_embedding_client import JinaEmbeddingClient
+        from domain.services.jina_embedding_client import BaseEmbeddingClient
 
         # Create a 2048-dim vector
         vector = np.random.randn(2048).astype(np.float32)
         
         for dims in [128, 256, 512, 1024, 2048]:
-            result = JinaEmbeddingClient.truncate(vector, dims)
+            result = BaseEmbeddingClient.truncate(vector, dims)
             assert len(result) == dims
             assert isinstance(result, list)
 
     @pytest.mark.skipif(True, reason="Requires torch/sentence-transformers")
     def test_truncate_invalid_dims(self):
         """Test truncation with invalid dimensions"""
-        from domain.services.jina_embedding_client import JinaEmbeddingClient
+        from domain.services.jina_embedding_client import BaseEmbeddingClient
         
         vector = np.random.randn(2048).astype(np.float32)
         
         # dims exceeds vector length
         with pytest.raises(ValueError) as exc_info:
-            JinaEmbeddingClient.truncate(vector, 4096)
+            BaseEmbeddingClient.truncate(vector, 4096)
         assert "dims exceeds vector length" in str(exc_info.value)
         
         # dims is zero or negative
         with pytest.raises(ValueError) as exc_info:
-            JinaEmbeddingClient.truncate(vector, 0)
+            BaseEmbeddingClient.truncate(vector, 0)
         assert "dims must be positive" in str(exc_info.value)
 
     @pytest.mark.skipif(True, reason="Requires torch/sentence-transformers")
     def test_truncate_none_vector(self):
         """Test truncation with None vector"""
-        from domain.services.jina_embedding_client import JinaEmbeddingClient
+        from domain.services.jina_embedding_client import BaseEmbeddingClient
         
-        result = JinaEmbeddingClient.truncate(None, 256)
+        result = BaseEmbeddingClient.truncate(None, 256)
         assert result == []
 
 

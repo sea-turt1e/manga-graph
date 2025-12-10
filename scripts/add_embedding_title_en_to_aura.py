@@ -29,7 +29,7 @@ from tqdm import tqdm
 # プロジェクトルートをパスに追加
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from domain.services.jina_embedding_client import JinaEmbeddingClient
+from domain.services.jina_embedding_client import JinaEmbeddingLocalClient
 
 load_dotenv()
 
@@ -95,7 +95,7 @@ def get_works_without_embedding_ja(session, limit: int = None) -> List[Dict[str,
     return [dict(record) for record in result]
 
 
-def generate_embeddings_batch(client: JinaEmbeddingClient, texts: List[str]) -> List[List[float]]:
+def generate_embeddings_batch(client: JinaEmbeddingLocalClient, texts: List[str]) -> List[List[float]]:
     """Generate embeddings for a batch of texts."""
     embeddings = []
     for text in texts:
@@ -146,7 +146,7 @@ def write_embeddings_batch(session, updates: List[Dict[str, Any]], target_proper
     return success, failed
 
 
-def process_embedding_en(aura_driver, client: JinaEmbeddingClient, batch_size: int, limit: int = None, dry_run: bool = False) -> tuple[int, int]:
+def process_embedding_en(aura_driver, client: JinaEmbeddingLocalClient, batch_size: int, limit: int = None, dry_run: bool = False) -> tuple[int, int]:
     """Process embedding_title_en generation."""
     print("\n" + "=" * 60)
     print("Processing embedding_title_en")
@@ -201,7 +201,7 @@ def process_embedding_en(aura_driver, client: JinaEmbeddingClient, batch_size: i
     return total_success, total_failed
 
 
-def process_embedding_ja(aura_driver, client: JinaEmbeddingClient, batch_size: int, limit: int = None, dry_run: bool = False) -> tuple[int, int]:
+def process_embedding_ja(aura_driver, client: JinaEmbeddingLocalClient, batch_size: int, limit: int = None, dry_run: bool = False) -> tuple[int, int]:
     """Process embedding_title_ja generation."""
     print("\n" + "=" * 60)
     print("Processing embedding_title_ja")
@@ -290,7 +290,7 @@ def main():
         if not args.dry_run:
             print("\nInitializing embedding model...")
             start_init = time.time()
-            client = JinaEmbeddingClient()
+            client = JinaEmbeddingLocalClient()
             print(f"Model loaded in {time.time() - start_init:.1f}s")
         
         total_en_success, total_en_failed = 0, 0

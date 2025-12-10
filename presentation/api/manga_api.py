@@ -9,7 +9,7 @@ from domain.services.cover_cache_service import get_cache_service
 from domain.services.cover_image_service import get_cover_service
 from domain.services.image_fetch_service import (ImageFetchService,
                                                  get_image_fetch_service)
-from domain.services.jina_embedding_client import (JinaEmbeddingClient,
+from domain.services.jina_embedding_client import (BaseEmbeddingClient,
                                                    get_jina_embedding_client)
 from domain.services.manga_anime_neo4j_service import MangaAnimeNeo4jService
 from domain.services.neo4j_media_arts_service import Neo4jMediaArtsService
@@ -132,7 +132,7 @@ def _get_query_embedding(query: str, dims: int) -> List[float]:
     vector = client.encode(query)
     if vector is None:
         raise HTTPException(status_code=400, detail="Query text is required for embedding search")
-    return JinaEmbeddingClient.truncate(vector, dims)
+    return BaseEmbeddingClient.truncate(vector, dims)
 
 
 def _handle_vector_search(
@@ -882,7 +882,7 @@ async def search_similar_by_embedding(
             raise HTTPException(status_code=400, detail="Failed to generate embedding for query")
 
         # Truncate to requested dimensions
-        query_embedding = JinaEmbeddingClient.truncate(vector, request.embedding_dims)
+        query_embedding = BaseEmbeddingClient.truncate(vector, request.embedding_dims)
 
         # Get property name
         property_name = EMBEDDING_TYPE_TO_PROPERTY[request.embedding_type]
@@ -984,7 +984,7 @@ async def search_similar_by_embedding_multi(
             raise HTTPException(status_code=400, detail="Failed to generate embedding for query")
 
         # Truncate to requested dimensions
-        query_embedding = JinaEmbeddingClient.truncate(vector, request.embedding_dims)
+        query_embedding = BaseEmbeddingClient.truncate(vector, request.embedding_dims)
 
         # Convert embedding_types to property_names
         property_names = [EMBEDDING_TYPE_TO_PROPERTY[t] for t in request.embedding_types]

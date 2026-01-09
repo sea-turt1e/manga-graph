@@ -48,7 +48,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config import env  # noqa: F401
 
-
 DEFAULT_PUBLISHER_MAPPING = Path(
     "data/myanimelist/myanimelist-scraped-data-2025-July/publisher_magazine_mapping.json"
 )

@@ -42,11 +42,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import env  # noqa: F401
-from domain.services.mal_api_client import (
-    MalApiClient,
-    RateLimitConfig,
-    transform_mal_manga_to_work,
-)
+from domain.services.mal_api_client import (MalApiClient, RateLimitConfig,
+                                            transform_mal_manga_to_work)
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:

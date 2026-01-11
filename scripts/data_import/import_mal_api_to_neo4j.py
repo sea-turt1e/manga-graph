@@ -267,10 +267,38 @@ class MalApiImporter:
                 except Exception as e:
                     print(f"Warning: {e}")
     
-    def clear_nodes(self, label: str = "Work") -> None:
-        """Delete all nodes with the given label."""
+    def clear_nodes(self, label: str = "Work", batch_size: int = 1000) -> None:
+        """Delete all nodes with the given label in batches to avoid timeout."""
+        print(f"Counting {label} nodes to delete...")
         with self.driver.session() as session:
-            session.run(f"MATCH (n:{label}) DETACH DELETE n")
+            result = session.run(f"MATCH (n:{label}) RETURN count(n) as count")
+            total = result.single()["count"]
+        
+        if total == 0:
+            print(f"No {label} nodes to delete")
+            return
+        
+        print(f"Deleting {total} {label} nodes in batches of {batch_size}...")
+        deleted = 0
+        
+        with tqdm(total=total, desc=f"Deleting {label} nodes") as pbar:
+            while True:
+                with self.driver.session() as session:
+                    result = session.run(f"""
+                        MATCH (n:{label})
+                        WITH n LIMIT $batch_size
+                        DETACH DELETE n
+                        RETURN count(*) as deleted
+                    """, batch_size=batch_size)
+                    batch_deleted = result.single()["deleted"]
+                
+                if batch_deleted == 0:
+                    break
+                
+                deleted += batch_deleted
+                pbar.update(batch_deleted)
+        
+        print(f"Deleted {deleted} {label} nodes")
     
     def import_works(self, works: List[Dict[str, Any]]) -> None:
         """Import Work nodes in batches."""

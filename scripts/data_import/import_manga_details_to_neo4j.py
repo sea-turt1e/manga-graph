@@ -171,12 +171,29 @@ def extract_serialization_data(manga: Dict[str, Any]) -> List[Dict[str, Any]]:
     
     magazines = []
     for serial in serialization:
-        node = serial.get("node", serial)
-        if node and node.get("name"):
-            magazines.append({
-                "id": node.get("id"),
-                "name": node.get("name"),
-            })
+        # Handle different formats:
+        # 1. String: "Magazine Name"
+        # 2. Dict with node: {"node": {"id": 1, "name": "Magazine Name"}}
+        # 3. Dict without node: {"id": 1, "name": "Magazine Name"}
+        if isinstance(serial, str):
+            # Already transformed to string
+            if serial.strip():
+                magazines.append({
+                    "id": None,
+                    "name": serial.strip(),
+                })
+        elif isinstance(serial, dict):
+            node = serial.get("node", serial)
+            if isinstance(node, dict) and node.get("name"):
+                magazines.append({
+                    "id": node.get("id"),
+                    "name": node.get("name"),
+                })
+            elif isinstance(node, str) and node.strip():
+                magazines.append({
+                    "id": None,
+                    "name": node.strip(),
+                })
     
     return magazines
 
@@ -189,10 +206,41 @@ def extract_author_data(manga: Dict[str, Any]) -> List[Dict[str, Any]]:
     
     author_list = []
     for author_entry in authors:
+        # Handle different formats:
+        # 1. String: "Author Name"
+        # 2. Dict with node: {"node": {...}, "role": "..."}
+        # 3. Dict without node: {"first_name": "...", "last_name": "..."}
+        if isinstance(author_entry, str):
+            # Already transformed to string
+            if author_entry.strip():
+                author_list.append({
+                    "id": None,
+                    "name": author_entry.strip(),
+                    "first_name": "",
+                    "last_name": "",
+                    "role": "",
+                })
+            continue
+        
+        if not isinstance(author_entry, dict):
+            continue
+            
         node = author_entry.get("node", author_entry)
         role = author_entry.get("role", "")
         
-        if node:
+        if isinstance(node, str):
+            # node is actually a string name
+            if node.strip():
+                author_list.append({
+                    "id": None,
+                    "name": node.strip(),
+                    "first_name": "",
+                    "last_name": "",
+                    "role": role,
+                })
+            continue
+        
+        if isinstance(node, dict):
             first_name = node.get("first_name", "")
             last_name = node.get("last_name", "")
             author_id = node.get("id")
@@ -214,6 +262,8 @@ def extract_author_data(manga: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "last_name": last_name,
                 "role": role,
             })
+    
+    return author_list
     
     return author_list
 
@@ -306,6 +356,12 @@ class MangaDetailsImporter:
             if not mal_id:
                 continue
             
+            # Convert to int for matching with Work.mal_id
+            try:
+                mal_id = int(mal_id)
+            except (ValueError, TypeError):
+                continue
+            
             magazines = extract_serialization_data(manga)
             for mag in magazines:
                 mag_name = mag.get("name")
@@ -366,6 +422,12 @@ class MangaDetailsImporter:
         for manga in manga_list:
             mal_id = manga.get("id")
             if not mal_id:
+                continue
+            
+            # Convert to int for matching with Work.mal_id
+            try:
+                mal_id = int(mal_id)
+            except (ValueError, TypeError):
                 continue
             
             authors = extract_author_data(manga)

@@ -31,6 +31,7 @@ LOGGER = logging.getLogger("jina_embeddings")
 DEFAULT_TITLE_DIMS = int(os.getenv("JINA_TITLE_EMBED_DIM", "128"))
 DEFAULT_DESCRIPTION_DIMS = int(os.getenv("JINA_DESCRIPTION_EMBED_DIM", "1024"))
 MAX_MODEL_DIMS = 2048
+JINA_EMBEDDING_MODE = "local"  # or "api"
 
 
 def fetch_batch(tx, last_id: Optional[str], limit: int, refresh_all: bool):
@@ -128,7 +129,7 @@ def main():
     if not uri or not password:
         raise ValueError("Neo4j connection variables are not set")
 
-    client = get_jina_embedding_client()
+    client = get_jina_embedding_client(jina_embedding_mode=JINA_EMBEDDING_MODE)
     driver = GraphDatabase.driver(uri, auth=(user, password))
 
     last_id: Optional[str] = None

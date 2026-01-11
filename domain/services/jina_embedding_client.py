@@ -259,7 +259,7 @@ class JinaEmbeddingLocalClient(BaseEmbeddingClient):
 JinaEmbeddingClient = Union[JinaEmbeddingAPIClient, JinaEmbeddingLocalClient]
 
 
-def get_jina_embedding_client() -> BaseEmbeddingClient:
+def get_jina_embedding_client(jina_embedding_mode: Optional[str] = "api") -> BaseEmbeddingClient:
     """Factory function to get the appropriate Jina embedding client.
 
     Returns API client by default. Set JINA_EMBEDDING_MODE=local to use local inference.
@@ -273,7 +273,7 @@ def get_jina_embedding_client() -> BaseEmbeddingClient:
     - JINA_EMBEDDING_DEVICE: Device for local mode (default: cpu)
     - JINA_EMBEDDING_CACHE_SIZE: LRU cache size (default: 1024)
     """
-    mode = os.getenv("JINA_EMBEDDING_MODE", "api").lower()
+    mode = (jina_embedding_mode or os.getenv("JINA_EMBEDDING_MODE", "api")).lower()
 
     if mode == "local":
         return JinaEmbeddingLocalClient.get_instance()

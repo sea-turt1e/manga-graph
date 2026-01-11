@@ -93,7 +93,7 @@ python scripts/add_synopsis_from_manga_csv.py `manga_csv_path` --create-index --
 pip install -r requirements.txt
 # uvの場合
 uv sync --frozen --no-dev --index-strategy unsafe-best-match
-```
+
 # 日本語形態素解析の辞書をダウンロード
 python -m unidic download
 

@@ -165,6 +165,8 @@ Apache License 2.0
 このアプリケーションは、以下のデータセットを使用しています：
 - [メディア芸術データベース](https://mediaarts-db.artmuseums.go.jp/)
   - 独立行政法人国立美術館国立アートリサーチセンター[メディア芸術データベース](https://mediaarts-db.artmuseums.go.jp/)のデータを使用しています。
+- OpenBD
+  - [OpenBD](https://openbd.jp/)のデータを使用しています。
 - [MyAnimeList](https://myanimelist.net/)
   - MyAnimeListの[API](https://myanimelist.net/apiconfig/references/api/v2)を利用して、データを取得しています。
 

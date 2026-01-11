@@ -4,7 +4,7 @@
 Usage:
     uv run python scripts/create_neo4j_indexes.py
     uv run python scripts/create_neo4j_indexes.py --show-only  # Show existing indexes only
-    uv run python scripts/create_neo4j_indexes.py --vector-dim-title 256 --vector-dim-desc 1024
+    uv run python scripts/create_neo4j_indexes.py --vector-dim-title 128 --vector-dim-desc 1024
 """
 
 import argparse
@@ -230,7 +230,7 @@ def create_composite_indexes(session, existing: dict) -> int:
 def main():
     parser = argparse.ArgumentParser(description="Create Neo4j indexes for manga-graph")
     parser.add_argument("--show-only", action="store_true", help="Show existing indexes only")
-    parser.add_argument("--vector-dim-title", type=int, default=256, help="Vector dimension for title embeddings")
+    parser.add_argument("--vector-dim-title", type=int, default=128, help="Vector dimension for title embeddings")
     parser.add_argument("--vector-dim-desc", type=int, default=1024, help="Vector dimension for description embeddings")
     parser.add_argument("--uri", type=str, help="Neo4j URI (default: from env)")
     parser.add_argument("--user", type=str, help="Neo4j user (default: from env)")

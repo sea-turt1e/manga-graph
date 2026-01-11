@@ -107,7 +107,7 @@ def _graph_response_from_data(graph_data: Dict[str, List[Dict]]) -> GraphRespons
     )
 
 
-EMBED_TITLE_DIMS = int(os.getenv("JINA_TITLE_EMBED_DIM", "256"))
+EMBED_TITLE_DIMS = int(os.getenv("JINA_TITLE_EMBED_DIM", "128"))
 EMBED_DESCRIPTION_DIMS = int(os.getenv("JINA_DESCRIPTION_EMBED_DIM", "1024"))
 
 

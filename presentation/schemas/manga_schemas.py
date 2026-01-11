@@ -171,7 +171,7 @@ class EmbeddingSimilaritySearchRequest(BaseModel):
 
     query: str
     embedding_type: str = "title_ja"  # "title_ja", "title_en", "description"
-    embedding_dims: int = 256  # Matryoshka dimensions: 128, 256, 512, 1024, 2048
+    embedding_dims: int = 128  # Matryoshka dimensions: 128, 256, 512, 1024, 2048
     limit: int = 5  # 返却件数
     threshold: float = 0.5  # 類似度閾値（コサイン類似度）
     include_hentai: bool = False
@@ -205,7 +205,7 @@ class MultiEmbeddingSimilaritySearchRequest(BaseModel):
 
     query: str
     embedding_types: List[str] = ["title_en", "title_ja"]  # 検索対象の埋め込みタイプリスト
-    embedding_dims: int = 256  # Matryoshka dimensions: 128, 256, 512, 1024, 2048
+    embedding_dims: int = 128  # Matryoshka dimensions: 128, 256, 512, 1024, 2048
     limit: int = 10  # 返却件数
     threshold: float = 0.3  # 類似度閾値（コサイン類似度）
     include_hentai: bool = False

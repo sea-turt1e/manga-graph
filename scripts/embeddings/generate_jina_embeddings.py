@@ -28,7 +28,7 @@ from domain.services.jina_embedding_client import get_jina_embedding_client
 
 LOGGER = logging.getLogger("jina_embeddings")
 
-DEFAULT_TITLE_DIMS = int(os.getenv("JINA_TITLE_EMBED_DIM", "256"))
+DEFAULT_TITLE_DIMS = int(os.getenv("JINA_TITLE_EMBED_DIM", "128"))
 DEFAULT_DESCRIPTION_DIMS = int(os.getenv("JINA_DESCRIPTION_EMBED_DIM", "1024"))
 MAX_MODEL_DIMS = 2048
 

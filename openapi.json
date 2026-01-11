@@ -2679,7 +2679,7 @@
           "embedding_dims": {
             "type": "integer",
             "title": "Embedding Dims",
-            "default": 256
+            "default": 128
           },
           "limit": {
             "type": "integer",

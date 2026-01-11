@@ -20,7 +20,7 @@ class TestEmbeddingSimilaritySearchRequest:
         request = EmbeddingSimilaritySearchRequest(query="test query")
         assert request.query == "test query"
         assert request.embedding_type == "title_ja"
-        assert request.embedding_dims == 256
+        assert request.embedding_dims == 128
         assert request.limit == 5
         assert request.threshold == 0.5
         assert request.include_hentai is False
@@ -64,7 +64,7 @@ class TestEmbeddingSimilaritySearchResponse:
             total=1,
             query="titan manga",
             embedding_type="title_ja",
-            embedding_dims=256,
+            embedding_dims=128,
             threshold=0.5,
         )
         assert response.total == 1
@@ -100,7 +100,7 @@ class TestMangaAnimeNeo4jServiceSimilaritySearch:
         
         with pytest.raises(ValueError) as exc_info:
             service.search_similar_works(
-                query_embedding=[0.1] * 256,
+                query_embedding=[0.1] * 128,
                 property_name="invalid_property",
                 limit=5,
                 threshold=0.5,
@@ -117,7 +117,7 @@ class TestMangaAnimeNeo4jServiceSimilaritySearch:
         
         for prop in ["embedding_title_ja", "embedding_title_en", "embedding_description"]:
             result = service.search_similar_works(
-                query_embedding=[0.1] * 256,
+                query_embedding=[0.1] * 128,
                 property_name=prop,
                 limit=5,
                 threshold=0.5,
@@ -194,7 +194,7 @@ class TestJinaEmbeddingClientTruncate:
         """Test truncation with None vector"""
         from domain.services.jina_embedding_client import BaseEmbeddingClient
         
-        result = BaseEmbeddingClient.truncate(None, 256)
+        result = BaseEmbeddingClient.truncate(None, 128)
         assert result == []
 
 

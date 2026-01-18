@@ -38,15 +38,18 @@ def fetch_batch(tx, last_id: Optional[str], limit: int, refresh_all: bool):
     cypher = """
     MATCH (w:Work)
     WHERE $refreshAll = true
-       OR w.embedding_title_ja IS NULL
-       OR w.embedding_title_en IS NULL
-       OR w.embedding_description IS NULL
+       OR (w.embedding_title_ja IS NULL AND w.japanese_name IS NOT NULL AND w.japanese_name <> "")
+       OR (w.embedding_title_en IS NULL AND w.english_name IS NOT NULL AND w.english_name <> "")
+       OR (w.embedding_description IS NULL AND w.description IS NOT NULL AND w.description <> "")
     WITH w
     WHERE $lastId IS NULL OR w.id > $lastId
     RETURN w.id AS id,
            w.japanese_name AS japanese_name,
            w.english_name AS english_name,
-           w.description AS description
+           w.description AS description,
+           w.embedding_title_ja IS NULL AS needs_ja,
+           w.embedding_title_en IS NULL AS needs_en,
+           w.embedding_description IS NULL AS needs_desc
     ORDER BY w.id
     LIMIT $limit
     """
@@ -55,12 +58,13 @@ def fetch_batch(tx, last_id: Optional[str], limit: int, refresh_all: bool):
 
 
 def update_embeddings(tx, rows: List[Dict[str, Any]]):
+    """Update embeddings only for fields that are NULL (using COALESCE to preserve existing)."""
     cypher = """
     UNWIND $rows AS row
     MATCH (w:Work {id: row.id})
-    SET w.embedding_title_ja = row.embedding_title_ja,
-        w.embedding_title_en = row.embedding_title_en,
-        w.embedding_description = row.embedding_description
+    SET w.embedding_title_ja = COALESCE(w.embedding_title_ja, row.embedding_title_ja),
+        w.embedding_title_en = COALESCE(w.embedding_title_en, row.embedding_title_en),
+        w.embedding_description = COALESCE(w.embedding_description, row.embedding_description)
     RETURN count(*)
     """
     tx.run(cypher, rows=rows)

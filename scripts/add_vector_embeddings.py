@@ -13,7 +13,10 @@ from dotenv import load_dotenv
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
+from config.python_version_check import warn_if_unsupported_environment  # noqa: E402
 from domain.services.batch_embedding_processor import BatchEmbeddingProcessor  # noqa: E402
+
+warn_if_unsupported_environment()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

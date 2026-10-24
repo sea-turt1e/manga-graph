@@ -14,7 +14,10 @@ from typing import List
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from config.python_version_check import warn_if_unsupported_environment
 from infrastructure.external.neo4j_repository import Neo4jMangaRepository
+
+warn_if_unsupported_environment()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

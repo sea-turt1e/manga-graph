@@ -21,13 +21,71 @@
 ## 技術スタック
 
 ### バックエンド
-- Python 3.12.7
+- Python 3.15.1（3.14.9 / 3.13.17 も対応）
 - FastAPI
 - Neo4j (グラフデータベース)
 - CleanArchitecture設計
 
 ### インフラ
 - Docker & Docker Compose
+
+## 対応 Python バージョンとセキュリティ対応（eMudhra CA 問題）
+
+[eMudhra 中間 CA の秘密鍵漏洩](https://emudhra.we-have-a-problem.com/)により、古い CA バンドルを使う環境では TLS 通信のなりすましを受ける可能性があります。本リポジトリでは以下の対応を行っています。
+
+### 対応 Python バージョン
+
+| バージョン | 状態 |
+| --- | --- |
+| **3.15.1** | 推奨（Docker / GitHub Actions で使用） |
+| 3.14.9 | 対応 |
+| 3.13.17 | 対応 |
+
+- 上記以外の Python で API サーバー（`main.py`）や埋め込みスクリプトを起動すると、`UnsupportedEnvironmentWarning` の警告が出ます。certifi が `2026.10.19` より古い場合も警告します。
+- 手元の環境は次のコマンドで確認できます（問題があれば終了コード 1）。
+
+```bash
+python -m config.python_version_check
+```
+
+- 対応バージョンの一覧は [config/python_version_check.py](config/python_version_check.py) の `SUPPORTED_PYTHON_VERSIONS` で管理しています。
+
+```bash
+# pyenv で 3.15.1 の環境を作る例
+pyenv install 3.15.1
+pyenv virtualenv 3.15.1 manga-graph-3.15.1
+pyenv local manga-graph-3.15.1
+pip install -U "pip>=26.2.2"
+pip install -r requirements.txt
+```
+
+### 依存パッケージの更新
+
+- `certifi>=2026.10.19`（修正済み CA バンドル）を `requirements.txt` に追加しました。
+- Python 3.15 用のホイールが無いため、`pydantic` 2.5.0 → 2.14.1、`aiohttp` 3.9.1 → 3.14.5、`pandas` 2.1.3 → 3.1.0 に更新しました。`requests` も 2.31.0 → 2.34.2 に更新しています。
+- Docker イメージは `python:3.15.1-slim` を使い、ビルド時にシステムの `ca-certificates` と `pip`（26.2.2 以上）を更新します。
+
+### 注意: 埋め込み生成（huggingface 方式）は Python 3.15 では使えません
+
+`torch` に Python 3.15 用のホイールがまだ無いため、Python 3.15 では `sentence-transformers` / `sentencepiece` をインストールしません（`requirements.txt` の環境マーカーで除外）。API サーバーはこれらを使わないため影響はありません。
+
+`scripts/add_vector_embeddings.py` と `scripts/add_synopsis_from_manga_csv.py`（`--method huggingface`）を実行する場合は **Python 3.14.9 または 3.13.17** を使ってください。Docker イメージにも torch は含まれません。
+
+### GitHub Actions の安全対策
+
+[.github/workflows/neo4j-keepalive.yml](.github/workflows/neo4j-keepalive.yml) に以下の変更を加えました。
+
+- `permissions: {}` で `GITHUB_TOKEN` の権限をなくしました。
+- `actions/setup-python` をタグではなくコミット SHA で固定し（v4 → v7.0.0）、タグの書き換えによる乗っ取りを防ぎます。
+- Python を `3.15.1` に固定し、`pip` / `neo4j` / `certifi` のバージョンを指定してインストールします。
+- 実行前にランナーの `ca-certificates` を更新します。
+- `timeout-minutes` と `concurrency` を設定し、ジョブが止まったり多重に実行されたりしないようにしました。
+- ランナーを `ubuntu-latest` から `ubuntu-24.04` に固定しました。
+- [.github/dependabot.yml](.github/dependabot.yml) を追加し、SHA で固定した Actions を毎週更新します。公開直後のリリースは乗っ取りのリスクがあるため、7 日待ってから更新します。
+
+### macOS の標準 `pip3` を使っている場合
+
+macOS 標準の `python3` / `pip3`（と、それから作った仮想環境）は独自の古いルート証明書を使います。上記の対応バージョンの Python に切り替えるか、[告知ページ](https://emudhra.we-have-a-problem.com/)の手順に従ってください。
 
 ## セットアップ
 

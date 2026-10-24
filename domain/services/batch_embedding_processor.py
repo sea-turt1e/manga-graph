@@ -115,6 +115,14 @@ class BatchEmbeddingProcessor:
                 device = "mps" if torch.backends.mps.is_available() else "cpu"
                 self._huggingface_model = SentenceTransformer(self.sentence_transformer_model, device=device)
                 logger.info(f"Hugging Face model loaded on {device}")
+            except ImportError as e:
+                # torch / sentence-transformers は Python 3.15 向けホイールが未提供
+                logger.error(
+                    f"Failed to import sentence-transformers ({e}). "
+                    "huggingface embedding requires Python 3.14.9 or 3.13.17 "
+                    "(torch has no Python 3.15 wheels yet)."
+                )
+                self._huggingface_model = None
             except Exception as e:
                 logger.error(f"Failed to load Hugging Face model: {e}")
                 self._huggingface_model = None

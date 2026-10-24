@@ -5,18 +5,34 @@ on:
     - cron: '0 9 * * *' # 毎日午前9時（UTC）
   workflow_dispatch:
 
+# GITHUB_TOKEN には何の権限も与えない（チェックアウトも不要）
+permissions: {}
+
+concurrency:
+  group: neo4j-keepalive
+  cancel-in-progress: true
+
 jobs:
   keepalive-safe:
-    runs-on: ubuntu-latest
-    
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
     steps:
+    # eMudhra CA issue (https://emudhra.we-have-a-problem.com/): patched system CA store
+    - name: Update CA certificates
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --only-upgrade ca-certificates
+
     - name: Setup Python
-      uses: actions/setup-python@v4
+      # タグは書き換え可能なためコミット SHA で固定（v7.0.0）
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
-        python-version: '3.12'
-    
+        python-version: '3.15.1'
+
     - name: Install Neo4j driver
-      run: pip install neo4j
+      # バージョンを固定して意図しないパッケージ更新を防ぐ
+      run: pip install "pip>=26.2.2" "neo4j==5.14.1" "certifi>=2026.10.19"
     
     - name: Simple Keep-Alive
       env:

@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # SHA 固定した GitHub Actions を最新に保つ
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # 公開直後のリリースは乗っ取りリスクがあるため 7 日待つ
+    cooldown:
+      default-days: 7

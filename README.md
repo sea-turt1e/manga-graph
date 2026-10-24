@@ -132,11 +132,10 @@ python scripts/update_total_volumes.py --apply
 
 ## 漫画のタイトル名のembeddingを生成してNeo4jに保存
 python scripts/add_vector_embeddings.py
-
-## 漫画のあらすじ（英語）とそのembeddingを生成してNeo4jに保存。`manga_csv_path`はMyAnimeListから取得したCSVファイルのパス
-python scripts/add_synopsis_from_manga_csv.py `manga_csv_path` --create-index
-
 ```
+
+<!-- ## 漫画のあらすじ（英語）とそのembeddingを生成してNeo4jに保存。`manga_csv_path`はMyAnimeListから取得したCSVファイルのパス
+python scripts/add_synopsis_from_manga_csv.py `manga_csv_path` --create-index -->
 
 ### 4. アプリケーションへのアクセス
 - バックエンドAPI: http://localhost:8000
@@ -148,13 +147,19 @@ python scripts/add_synopsis_from_manga_csv.py `manga_csv_path` --create-index
 ### 開発環境の起動
 ```bash
 # 依存関係のインストール
+## pipの場合
 pip install -r requirements.txt
+# uvの場合
+uv sync --frozen --no-dev --index-strategy unsafe-best-match
 
 # 日本語形態素解析の辞書をダウンロード
 python -m unidic download
 
 # 開発サーバー起動
+## pipの場合
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
+## uvの場合
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 
@@ -217,13 +222,11 @@ Apache License 2.0
 ## 出典
 このアプリケーションは、以下のデータセットを使用しています：
 - [メディア芸術データベース](https://mediaarts-db.artmuseums.go.jp/)
-  - 出典：独立行政法人国立美術館国立アートリサーチセンター「メディア芸術データベース」 （https://mediaarts-db.artmuseums.go.jp/）
-  - 独立行政法人国立美術館国立アートリサーチセンター「メディア芸術データベース」（https://mediaarts-db.artmuseums.go.jp/）を加工してデータを作成
-- [OpenBD](https://openbd.jp/)
-  - 「OpenBD」 （https://openbd.jp/） を利用しています。
-- [MyAnimeList Dataset](https://www.kaggle.com/datasets/azathoth42/myanimelist)
-  - 本プロジェクトはMyAnimeList Dataset（MyAnimeList.net） のデータを利用しています。データベースは Open Database License (ODbL) v1.0、個々のコンテンツは Database Contents License (DbCL) v1.0 に基づきます。ライセンス条件に従い帰属表示と通知保持を行っています。」
-
+  - 独立行政法人国立美術館国立アートリサーチセンター[メディア芸術データベース](https://mediaarts-db.artmuseums.go.jp/)のデータを使用しています。
+- OpenBD
+  - [OpenBD](https://openbd.jp/)のデータを使用しています。
+- [MyAnimeList](https://myanimelist.net/)
+  - MyAnimeListの[API](https://myanimelist.net/apiconfig/references/api/v2)を利用して、データを取得しています。
 
 ## ご協力
 

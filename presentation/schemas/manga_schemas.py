@@ -69,6 +69,13 @@ class GraphResponse(BaseModel):
     total_edges: int
 
 
+class MagazineWorkGraphRequest(BaseModel):
+    magazine_element_ids: List[str]
+    work_limit: Optional[int] = 50
+    include_hentai: Optional[bool] = False
+    reference_work_id: Optional[str] = None  # For priority-based sorting
+
+
 class AuthorResponse(BaseModel):
     id: str
     name: str
@@ -157,3 +164,81 @@ class TitleSimilarityItem(BaseModel):
 class TitleSimilarityResponse(BaseModel):
     results: List[TitleSimilarityItem]
     total: int
+
+
+class EmbeddingSimilaritySearchRequest(BaseModel):
+    """類似度検索APIのリクエストスキーマ"""
+
+    query: str
+    embedding_type: str = "title_ja"  # "title_ja", "title_en", "description"
+    embedding_dims: int = 128  # Matryoshka dimensions: 128, 256, 512, 1024, 2048
+    limit: int = 5  # 返却件数
+    threshold: float = 0.5  # 類似度閾値（コサイン類似度）
+    include_hentai: bool = False
+
+
+class EmbeddingSimilaritySearchResultItem(BaseModel):
+    """類似度検索結果の1件"""
+
+    work_id: str
+    title_en: Optional[str] = None
+    title_ja: Optional[str] = None
+    description: Optional[str] = None
+    similarity_score: float
+    media_type: Optional[str] = None
+    genres: Optional[List[str]] = None
+
+
+class EmbeddingSimilaritySearchResponse(BaseModel):
+    """類似度検索APIのレスポンススキーマ"""
+
+    results: List[EmbeddingSimilaritySearchResultItem]
+    total: int
+    query: str
+    embedding_type: str
+    embedding_dims: int
+    threshold: float
+
+
+class MultiEmbeddingSimilaritySearchRequest(BaseModel):
+    """複数埋め込みタイプで並列に類似度検索を行うAPIのリクエストスキーマ"""
+
+    query: str
+    embedding_types: List[str] = ["title_en", "title_ja"]  # 検索対象の埋め込みタイプリスト
+    embedding_dims: int = 128  # Matryoshka dimensions: 128, 256, 512, 1024, 2048
+    limit: int = 10  # 返却件数
+    threshold: float = 0.3  # 類似度閾値（コサイン類似度）
+    include_hentai: bool = False
+
+
+class MultiEmbeddingSimilaritySearchResponse(BaseModel):
+    """複数埋め込みタイプで並列に類似度検索を行うAPIのレスポンススキーマ"""
+
+    results: List[EmbeddingSimilaritySearchResultItem]
+    total: int
+    query: str
+    embedding_types: List[str]
+    embedding_dims: int
+    threshold: float
+
+
+class RelatedGraphBatchRequest(BaseModel):
+    """Author, Magazine, Publisherの関連グラフを並列取得するリクエストスキーマ"""
+
+    author_node_id: Optional[str] = None
+    magazine_node_id: Optional[str] = None
+    publisher_node_id: Optional[str] = None
+    author_limit: int = 5
+    magazine_limit: int = 5
+    publisher_limit: int = 3
+    reference_work_id: Optional[str] = None  # magazine検索でのソート基準
+    exclude_magazine_id: Optional[str] = None  # publisher検索での除外対象
+    include_hentai: bool = False
+
+
+class RelatedGraphBatchResponse(BaseModel):
+    """Author, Magazine, Publisherの関連グラフを並列取得するレスポンススキーマ"""
+
+    author_graph: Optional[GraphResponse] = None
+    magazine_graph: Optional[GraphResponse] = None
+    publisher_graph: Optional[GraphResponse] = None

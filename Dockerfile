@@ -1,21 +1,29 @@
-FROM python:3.15.1-slim
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 WORKDIR /app
 
-# eMudhra CA issue (https://emudhra.we-have-a-problem.com/):
-# upgrade the system CA store and pip to the patched versions
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends --only-upgrade ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir "pip>=26.2.2"
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 
-COPY requirements.txt .
-# torch / sentence-transformers are not installed: no Python 3.15 wheels yet,
-# and the API server does not use them (only the embedding scripts do)
-RUN pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml uv.lock ./
+
+RUN apt-get update \
+    && apt-get install -y curl build-essential pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
+
+ENV PATH="/root/.cargo/bin:/app/.venv/bin:${PATH}"
+ENV UV_INDEX_STRATEGY=unsafe-best-match
+
+RUN uv sync --frozen --no-dev
+
+RUN uv add torch torchvision \
+    --index https://download.pytorch.org/whl/cpu \
+    --index https://pypi.org/simple \
+    --index-strategy unsafe-best-match \
+    --no-sync
 
 COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

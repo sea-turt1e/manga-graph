@@ -1,3 +1,6 @@
+# Managed via uv. To regenerate:
+#   uv export --format requirements.txt --no-dev --frozen > requirements.txt
+
 fastapi==0.104.1
 uvicorn==0.24.0
 neo4j==5.14.1
@@ -24,4 +27,5 @@ openai>=1.0.0
 sentence-transformers>=2.2.0; python_version < "3.15"
 numpy>=1.24.0
 protobuf==6.32.0
-sentencepiece==0.2.1; python_version < "3.15"
+sentencepiece==0.2.1
+peft>=0.10.0

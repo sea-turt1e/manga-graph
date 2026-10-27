@@ -1,8 +1,8 @@
 name: Neo4j AuraDB Keep-Alive (Safe)
 
 on:
-  schedule:
-    - cron: '0 9 * * *' # 毎日午前9時（UTC）
+  # schedule:
+  #   - cron: '0 9 * * *' # 毎日午前9時（UTC）
   workflow_dispatch:
 
 # GITHUB_TOKEN には何の権限も与えない（チェックアウトも不要）
